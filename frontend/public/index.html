@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>ezdyndns</title>
+	<script src="/htmx.min.js"></script>
+	<style>
+		:root {
+			color-scheme: dark;
+			/* Linear-ish surface stack */
+			--canvas: #0f1011;
+			--panel: #141516;
+			--raised: #191a1b;
+			--hover: #23252a;
+			--border: rgba(255, 255, 255, 0.08);
+			--text: #f7f8f8;
+			--text-2: #e2e4e7;
+			--muted: #8a8f98;
+			--faint: #62666d;
+			--accent: #5e6ad2;
+			--accent-hover: #7170ff;
+			--accent-tint: rgba(94, 106, 210, 0.12);
+			--ok: #10b981;
+			--warn: #e0af68;
+			--err: #f7768e;
+			--radius: 10px;
+		}
+		* { box-sizing: border-box; margin: 0; padding: 0; }
+		html { background: var(--canvas); }
+		body {
+			font-family: Inter, ui-sans-serif, system-ui, -apple-system, sans-serif;
+			font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+			color: var(--text);
+			max-width: 860px;
+			margin: 0 auto;
+			padding: 2.5rem 1.25rem 4rem;
+			-webkit-font-smoothing: antialiased;
+		}
+
+		/* ---------- header ---------- */
+		header { margin-bottom: 1.75rem; }
+		.brand { display: flex; align-items: center; gap: 0.7rem; }
+		.logo {
+			width: 34px; height: 34px; border-radius: 9px;
+			background: var(--accent-tint);
+			display: grid; place-items: center;
+			font-size: 1.05rem;
+		}
+		h1 { font-size: 1.15rem; font-weight: 650; letter-spacing: -0.01em; }
+		.tagline { color: var(--muted); font-size: 0.85rem; margin-top: 0.35rem; }
+
+		/* ---------- cards ---------- */
+		.card {
+			background: var(--panel);
+			border: 1px solid var(--border);
+			border-radius: var(--radius);
+			padding: 1.1rem 1.25rem;
+			margin-bottom: 1rem;
+		}
+		.card h2 {
+			font-size: 0.8rem; font-weight: 600; text-transform: uppercase;
+			letter-spacing: 0.08em; color: var(--muted);
+			margin-bottom: 0.9rem;
+		}
+
+		/* ---------- lock screen ---------- */
+		#lockscreen { max-width: 420px; margin: 3rem auto 0; }
+		#lockscreen .lock-icon {
+			width: 44px; height: 44px; border-radius: 11px;
+			background: var(--accent-tint);
+			display: grid; place-items: center; font-size: 1.3rem; margin-bottom: 1rem;
+		}
+		#lockscreen p { color: var(--muted); font-size: 0.88rem; margin: 0.6rem 0 1.25rem; }
+		#lockstate { font-size: 0.85rem; margin-top: 0.6rem; min-height: 1.2em; }
+		#lockstate.error { color: var(--err); }
+
+		/* ---------- status strip ---------- */
+		.status-row { display: flex; align-items: center; gap: 1.25rem; flex-wrap: wrap; }
+		.ip { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 1.05rem; }
+		.dot {
+			width: 8px; height: 8px; border-radius: 50%; background: var(--ok);
+			box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.15);
+			display: inline-block; margin-right: 0.45rem; vertical-align: 1px;
+		}
+		.last-check { color: var(--muted); font-size: 0.85rem; }
+		.spacer { flex: 1; }
+
+		/* ---------- tables ---------- */
+		table { border-collapse: collapse; width: 100%; font-size: 0.88rem; }
+		th {
+			text-align: left; font-weight: 550; color: var(--faint);
+			font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em;
+			padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--border);
+		}
+		td { padding: 0.55rem 0.6rem; border-bottom: 1px solid var(--border); vertical-align: middle; }
+		td .row { gap: 0.55rem; flex-wrap: nowrap; white-space: nowrap; }
+		tr:last-child td { border-bottom: none; }
+		td code {
+			font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+			font-size: 0.82rem; color: var(--text-2);
+			background: var(--raised); border: 1px solid var(--border);
+			border-radius: 5px; padding: 0.1rem 0.35rem;
+		}
+
+		/* ---------- badges ---------- */
+		.badge {
+			display: inline-block; font-size: 0.72rem; font-weight: 600;
+			padding: 0.14rem  0.55rem; border-radius: 999px; letter-spacing: 0.02em;
+		}
+		.badge.ok { color: var(--ok); background: rgba(16, 185, 129, 0.1); }
+		.badge.paused { color: var(--warn); background: rgba(224, 175, 104, 0.1); }
+		.badge.err { color: var(--err); background: rgba(247, 118, 142, 0.1); }
+		.badge + .muted { margin-left: 0.6rem; }
+
+		/* ---------- inputs & buttons ---------- */
+		input, select, button {
+			font: inherit; font-size: 0.88rem;
+			background: var(--raised); color: var(--text);
+			border: 1px solid var(--border); border-radius: 7px;
+			padding: 0.48rem 0.7rem;
+		}
+		input::placeholder { color: var(--faint); }
+		input:focus-visible, select:focus-visible, button:focus-visible {
+			outline: 2px solid var(--accent); outline-offset: 1px;
+		}
+		button { cursor: pointer; transition: border-color 0.15s, background 0.15s; }
+		button:hover { background: var(--hover); border-color: rgba(255,255,255,0.16); }
+		button.primary {
+			background: var(--accent); border-color: var(--accent);
+			color: #fff; font-weight: 550;
+		}
+		button.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+		button.ghost { background: transparent; color: var(--text-2); border-color: var(--border); }
+		button.ghost:hover { background: var(--hover); border-color: rgba(255,255,255,0.16); }
+		button.danger { background: transparent; color: var(--err); border-color: transparent; }
+		button.danger:hover { background: rgba(247, 118, 142, 0.08); border-color: rgba(247, 118, 142, 0.3); }
+		.row { display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; }
+
+		.muted { color: var(--muted); font-size: 0.85rem; }
+		.hint { color: var(--faint); font-size: 0.78rem; margin-top: 0.7rem; }
+		.interval-label { display: flex; align-items: center; gap: 0.45rem; }
+		.actions { display: flex; gap: 0.35rem; justify-content: flex-end; }
+		.domains-row td { padding-top: 0; }
+		.add-domain-form { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+		.log-scroll { max-height: 320px; overflow-y: auto; }
+		.log-scroll::-webkit-scrollbar { width: 6px; }
+		.log-scroll::-webkit-scrollbar-thumb { background: var(--hover); border-radius: 3px; }
+
+		/* ---------- responsive / mobile ---------- */
+		@media (max-width: 640px) {
+			body { padding: 1.25rem 0.9rem 3rem; }
+			header { margin-bottom: 1.25rem; }
+			.card { padding: 0.9rem 0.95rem; border-radius: 9px; }
+			.status-row { gap: 0.75rem; }
+			.ip { font-size: 0.95rem; }
+			.last-check { font-size: 0.78rem; }
+			/* services table: stack label + meta on their own lines */
+			table, thead, tbody, tr, td, th { display: block; width: 100%; }
+			thead { display: none; }
+			tr { padding: 0.55rem 0; border-bottom: 1px solid var(--border); }
+			tr:last-child { border-bottom: none; }
+			td { border: none; padding: 0.15rem 0; }
+			td .row { gap: 0.5rem; }
+			.actions { justify-content: flex-start; margin-top: 0.4rem; }
+			td code { font-size: 0.8rem; }
+			/* forms: full-width stacked inputs */
+			.gated .row, .add-domain-form { display: grid; grid-template-columns: 1fr; gap: 0.5rem; }
+			.gated form.row { grid-template-columns: 1fr 1fr; }
+			input, select { width: 100%; }
+			button { width: 100%; padding: 0.55rem 0.8rem; }
+			#lockscreen .row { grid-template-columns: 1fr; }
+		}
+
+		/* hidden until unlock */
+		.gated { display: none; }
+		body.authed .gated { display: block; }
+		body.authed #lockscreen { display: none; }
+	</style>
+</head>
+<body>
+	<header>
+		<div class="brand">
+			<div class="logo">🌐</div>
+			<div>
+				<h1>ezdyndns</h1>
+				<div class="tagline">keeps your A records pointed at home</div>
+			</div>
+		</div>
+	</header>
+
+	<!-- ===== lock screen (only visible when locked) ===== -->
+	<div id="lockscreen" class="card">
+		<div class="lock-icon">🔒</div>
+		<p>Enter your management token to load the dashboard. Services, domains and logs stay hidden until you unlock.</p>
+		<div class="row">
+			<input id="api-token" type="password" placeholder="management token" style="flex:1; min-width: 180px">
+			<button class="primary" id="unlock-btn">Unlock</button>
+		</div>
+		<div id="lockstate"></div>
+	</div>
+
+	<!-- ===== gated app (hidden until unlocked) ===== -->
+	<div class="gated">
+		<!-- status strip -->
+		<div id="status" hx-get="/partials/status" hx-trigger="every 15s, ezdyndns:refresh from:body" hx-swap="innerHTML"></div>
+
+		<div class="card">
+			<h2>Services</h2>
+			<div id="services" hx-get="/partials/services" hx-trigger="every 30s, ezdyndns:refresh from:body" hx-swap="innerHTML"></div>
+		</div>
+
+		<div class="card">
+			<h2>Add service</h2>
+			<form hx-post="/partials/services" hx-target="#services" hx-swap="innerHTML" class="row">
+				<input name="name" placeholder="name (e.g. namecheap-main)" required>
+				<select name="provider">
+					<option value="namecheap">namecheap</option>
+					<option value="cloudflare">cloudflare</option>
+				</select>
+				<input name="username" placeholder="username / API token (cf)">
+				<input name="password" type="password" placeholder="password / ddns key">
+				<label class="interval-label">
+					<span class="muted">check every</span>
+					<select name="interval_sec" title="how often to check the public IP and push updates">
+						<option value="60">1 min</option>
+						<option value="120">2 min</option>
+						<option value="300" selected>5 min</option>
+						<option value="600">10 min</option>
+						<option value="900">15 min</option>
+					</select>
+				</label>
+				<button type="submit" class="primary">Add</button>
+			</form>
+			<div class="row" style="margin-top:0.6rem">
+				<input name="hostname" placeholder="hostname (e.g. home)">
+				<input name="domainname" placeholder="domain (e.g. example.com)">
+				<input name="dpassword" type="password" placeholder="domain ddns key (namecheap per-domain)">
+			</div>
+			<div class="hint">First domain is added together with the service. Check interval is shared per service.</div>
+		</div>
+
+		<div class="card">
+			<h2>DNS update log</h2>
+			<div id="updates" hx-get="/partials/updates" hx-trigger="every 30s, ezdyndns:refresh from:body" hx-swap="innerHTML"></div>
+			<div class="hint">Each interval the checker verifies your public IP and pushes an update — you'll see a fresh row every cycle. A quiet log means the scheduler is paused or no services are active.</div>
+		</div>
+	</div>
+
+	<script src="/app.js"></script>
+</body>
+</html>

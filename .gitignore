@@ -1,0 +1,14 @@
+node_modules/
+logs/
+db/*.db
+db/*.db-shm
+db/*.db-wal
+
+# Secrets — never commit. The root .env is read by docker compose
+# (documented in README/Deploy), so ignore .env at ANY depth, not just
+# backend/.env; a root .env holds the API token and encryption key.
+.env
+.env.*
+!*.env.example
+
+frontend/public/htmx.min.js

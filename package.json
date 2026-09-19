@@ -1,0 +1,22 @@
+{
+  "name": "ezdyndns",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "scripts": {
+    "install:backend": "cd backend && bun install",
+    "install:frontend": "cd frontend && bun install",
+    "install": "bun run install:backend",
+    "dev:backend": "cd backend && bun --watch index.js",
+    "dev:frontend": "echo 'no build step - frontend is static htmx'",
+    "dev": "bun run dev:backend",
+    "test:backend": "cd backend && bun test",
+    "start": "pm2-runtime start ecosystem.config.js --env production",
+    "stop": "pm2 stop all",
+    "restart": "pm2 restart all",
+    "logs": "pm2 monit"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  }
+}

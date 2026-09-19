@@ -1,0 +1,13 @@
+{
+	"name": "ezdyndns-backend",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"dev": "bun --watch index.js",
+		"test": "bun test"
+	},
+	"dependencies": {
+		"deadslog": "latest",
+		"elysia": "^1.4.0"
+	}
+}

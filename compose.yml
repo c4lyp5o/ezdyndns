@@ -1,0 +1,27 @@
+services:
+  ezdyndns:
+    build: .
+    container_name: ezdyndns
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      - EZDYNDNS_HOST=0.0.0.0
+      - TZ=Asia/Kuala_Lumpur
+    volumes:
+      # SQLite state + update log persist across rebuilds
+      - ./db:/app/db
+      - ./logs:/app/logs
+    networks:
+      - traefik_default
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=traefik_default"
+      - "traefik.http.routers.ezdyndns.rule=Host(`${EZDYNDNS_HOSTNAME:-ddns.example.com}`)"
+      - "traefik.http.routers.ezdyndns.entrypoints=websecure"
+      - "traefik.http.services.ezdyndns.loadbalancer.server.port=5070"
+      - "traefik.http.routers.ezdyndns.middlewares=enhanced-chain@file"
+
+networks:
+  traefik_default:
+    external: true
