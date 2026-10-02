@@ -1,5 +1,6 @@
 import { decryptSecret } from "../crypto";
 import logger from "../logger";
+import { dedynScope, updateDedyn, verifyDedynToken } from "./dedyn";
 
 // Provider adapters. Each returns { ok, detail }.
 // Credentials go in headers / POST body — NEVER in the URL (the 2024 cdyndns bug).
@@ -85,14 +86,17 @@ async function updateCloudflare(service, domain, ip, { signal } = {}) {
 	);
 	const patched = await patchRes.json();
 	return {
-		ok: patched.success,
-		detail: patched.success ? `updated A ${fqdn} -> ${ip}` : JSON.stringify(patched.errors).slice(0, 300),
+		ok: !!patched.success,
+		detail: patched.success ? `updated A ${fqdn} -> ${ip}` : JSON.stringify(patched.errors ?? {}).slice(0, 300),
 	};
 }
 
 const providers = new Map([
 	["namecheap", updateNamecheap],
 	["cloudflare", updateCloudflare],
+	// deSEC (dedyn.io): implementation lives in ./dedyn.js — the update.dedyn.io
+	// dynDNS endpoint, STS token verification and the TTL scope convention.
+	["dedyn", updateDedyn],
 ]);
 
 export async function updateRecord(service, domain, ip, opts) {
@@ -100,3 +104,39 @@ export async function updateRecord(service, domain, ip, opts) {
 	if (!fn) throw new Error(`unknown provider: ${service.provider}`);
 	return fn(service, domain, ip, opts);
 }
+
+export const PROVIDERS = ["namecheap", "cloudflare", "dedyn"];
+
+// Pre-flight credential check when a service is added, before anything is stored.
+// Takes RAW credentials (not the encrypted db fields) and returns { ok, detail };
+// detail never contains the secret itself.
+export async function verifyProvider({ provider, username, password, hostname, domainname }) {
+	if (!PROVIDERS.includes(provider)) return { ok: false, detail: `unknown provider: ${provider}` };
+
+	if (provider === "dedyn")
+		return verifyDedynToken(username, { hostname, domainname, signal: AbortSignal.timeout(10000) });
+
+	if (provider === "cloudflare") {
+		if (!username) return { ok: false, detail: "cloudflare needs an API token" };
+		try {
+			const res = await fetch("https://api.cloudflare.com/client/v4/user/tokens/verify", {
+				headers: { Authorization: `Token ${username}`, "Content-Type": "application/json" },
+				signal: AbortSignal.timeout(10000),
+			});
+			const j = await res.json().catch(() => ({}));
+			return {
+				ok: !!j.success,
+				detail: j.success ? "valid Cloudflare token" : JSON.stringify(j.errors ?? {}).slice(0, 200),
+			};
+		} catch (err) {
+			return { ok: false, detail: `cloudflare unreachable: ${err?.name ?? "error"}` };
+		}
+	}
+
+	// namecheap: a per-domain DDNS key can only be proven on the update endpoint
+	// itself, so its validation happens on the first scheduler pass.
+	if (!password) return { ok: false, detail: "namecheap needs a DDNS key" };
+	return { ok: true, detail: "key stored (verified on first update)" };
+}
+
+export { dedynScope };
