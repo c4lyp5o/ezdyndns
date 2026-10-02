@@ -139,6 +139,11 @@
 
 		.muted { color: var(--muted); font-size: 0.85rem; }
 		.hint { color: var(--faint); font-size: 0.78rem; margin-top: 0.7rem; }
+		#provider-hint { margin-top: 0.45rem; }
+		#add-result { display: none; }
+		#add-result.show { display: block; }
+		#add-result.ok { color: var(--ok); }
+		#add-result.err { color: var(--err); }
 		.interval-label { display: flex; align-items: center; gap: 0.45rem; }
 		.actions { display: flex; gap: 0.35rem; justify-content: flex-end; }
 		.domains-row td { padding-top: 0; }
@@ -212,14 +217,15 @@
 
 		<div class="card">
 			<h2>Add service</h2>
-			<form hx-post="/partials/services" hx-target="#services" hx-swap="innerHTML" class="row">
+			<form id="add-service-form" name="add-service" hx-post="/partials/services" hx-target="#services" hx-swap="innerHTML" class="row">
 				<input name="name" placeholder="name (e.g. namecheap-main)" required>
 				<select name="provider">
 					<option value="namecheap">namecheap</option>
 					<option value="cloudflare">cloudflare</option>
+					<option value="dedyn">dedyn (deSEC)</option>
 				</select>
-				<input name="username" placeholder="username / API token (cf)">
-				<input name="password" type="password" placeholder="password / ddns key">
+				<input name="username" id="svc-username" placeholder="username / API token (cf)" data-username-ph>
+				<input name="password" type="password" id="svc-password" placeholder="password / ddns key" data-password-ph>
 				<label class="interval-label">
 					<span class="muted">check every</span>
 					<select name="interval_sec" title="how often to check the public IP and push updates">
@@ -230,13 +236,15 @@
 						<option value="900">15 min</option>
 					</select>
 				</label>
-				<button type="submit" class="primary">Add</button>
+				<button type="submit" class="primary" hx-disabled-elt="this">Add</button>
 			</form>
 			<div class="row" style="margin-top:0.6rem">
 				<input name="hostname" placeholder="hostname (e.g. home)">
 				<input name="domainname" placeholder="domain (e.g. example.com)">
 				<input name="dpassword" type="password" placeholder="domain ddns key (namecheap per-domain)">
 			</div>
+			<div id="provider-hint" class="hint"></div>
+			<div id="add-result" class="hint" role="status" aria-live="polite"></div>
 			<div class="hint">First domain is added together with the service. Check interval is shared per service.</div>
 		</div>
 
