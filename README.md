@@ -14,6 +14,19 @@ concept on the ez stack.
 ## Providers
 - **namecheap** — dynamicdns.park-your-domain.com DDNS API (password = your DDNS key)
 - **cloudflare** — API v4 (username = API token; finds zone, creates or patches the A record)
+- **dedyn** — deSEC stack (dedyn.io) dynDNS update API; username = deSEC STS token, sent as an
+  `Authorization: Token …` header. Use a dedicated token scoped `domain/update/ttl/ip4` with TTL ≤
+  the check interval. The token is verified against the dynDNS update endpoint itself before the
+  service is stored (200 + `good` = valid): deSEC's `GET /api/v1/tokens/self/` answers 404 for
+  valid update-scoped tokens too, so it cannot be used as a check. Updates go to `https://update.dedyn.io/ezdyndns`
+  with the detected IP passed explicitly as `ip=` (any path is allowed except `.ico`/`.png`).
+  A same-IP update re-asserts the record every cycle like the other providers. deSEC rate-limits
+  the dynDNS endpoint at 2 calls / 2 min per account (sliding window, `429` + `Retry-After`) —
+  a 300s interval spends exactly 1 of those; 429 is reported as retry-later, never as bad credentials.
+
+Credentials for **all** providers are validated before the service row is created (`422` +
+`credential check failed: …` on `POST /api/services` and the htmx form path), so a bad token
+can't sit failing silently in the update log.
 
 ## Run
 ```bash
@@ -49,6 +62,8 @@ rebuilds — the container must run as a uid that can write those directories.
   daemon keeps asserting the record rather than assuming it is still correct.
 - Every outbound call has a 5-10s `AbortSignal.timeout` — a hung provider
   can't wedge the scheduler.
+- Schema changes SQLite can't `ALTER` (CHECK constraints) run as recorded
+  migrations in `schema_migrations` on boot — see `MIGRATIONS` in `backend/db.js`.
 - The `updates` log is pruned daily (successes 3 days, failures 30 days) so
   per-cycle logging doesn't grow the DB without bound.
 - Optional: set `EZDYNDNS_NTFY_URL` to get an ntfy push on IP change, update
