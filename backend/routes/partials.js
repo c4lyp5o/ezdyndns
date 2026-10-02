@@ -12,6 +12,7 @@ import {
 	sanitizeService,
 } from "../db";
 import { restartScheduler, checkOnce } from "../scheduler";
+import { PROVIDERS, verifyProvider } from "../services/providers";
 import config from "../config";
 
 const esc = (s) =>
@@ -148,7 +149,20 @@ export const partials = new Elysia({ prefix: "/partials" })
 	})
 	.get("/status", () => statusPartial())
 	.get("/services", () => servicesPartial())
-	.post("/services", ({ body }) => {
+	.post("/services", async ({ body, set }) => {
+		// Same credential gate as POST /api/services — a bad deSEC/CF token is
+		// rejected before it can sit failing silently in the update log.
+		const check = await verifyProvider({
+			provider: body.provider,
+			username: body.username,
+			password: body.password,
+			hostname: body.hostname,
+			domainname: body.domainname,
+		});
+		if (!check.ok) {
+			set.status = 422;
+			return { message: `credential check failed: ${check.detail}` };
+		}
 		const id = createService(body);
 		if (body.hostname && body.domainname)
 			addDomain(id, { hostname: body.hostname, domainname: body.domainname, password: body.dpassword });

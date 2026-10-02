@@ -1,6 +1,7 @@
 import { Elysia } from "elysia";
 import { getServices, getService, getDomains, createService, addDomain, deleteDomain, deleteService, setStatus, recentUpdates, getState, sanitizeService } from "../db";
 import { restartScheduler, stopScheduler, checkOnce } from "../scheduler";
+import { PROVIDERS, verifyProvider } from "../services/providers";
 import logger from "../logger";
 
 import config from "../config";
@@ -47,9 +48,23 @@ export const api = new Elysia({ prefix: "/api" })
 			set.status = 400;
 			return { message: "name and provider are required" };
 		}
-		if (!["namecheap", "cloudflare"].includes(provider)) {
+		if (!PROVIDERS.includes(provider)) {
 			set.status = 400;
-			return { message: "provider must be namecheap or cloudflare" };
+			return { message: `provider must be one of: ${PROVIDERS.join(", ")}` };
+		}
+		// Validate credentials BEFORE storing anything — a bad deSEC/CF token
+		// would otherwise sit silently failing every interval in the update log.
+		const first = domains?.[0];
+		const check = await verifyProvider({
+			provider,
+			username,
+			password,
+			hostname: first?.hostname,
+			domainname: first?.domainname,
+		});
+		if (!check.ok) {
+			set.status = 422;
+			return { message: `credential check failed: ${check.detail}` };
 		}
 		const id = createService({ name, provider, username, password, interval_sec });
 		for (const d of domains ?? []) {
