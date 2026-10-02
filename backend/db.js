@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 
 import { encryptSecret } from "./crypto";
+import logger from "./logger";
 
 const DB_PATH = process.env.EZDYNDNS_DB || `${import.meta.dir}/../db/ezdyndns.db`;
 
@@ -41,6 +42,52 @@ db.exec(`
 	);
 	CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT);
 `);
+
+// Migrations: CREATE TABLE only covers fresh installs, so any change to a CHECK
+// constraint needs an explicit table rebuild. SQLite can't ALTER a CHECK, so we
+// recreate + copy when the stored DDL no longer matches the expected one.
+const MIGRATIONS = [
+	{
+		// 'dedyn' (deSEC / dedyn.io) provider added 2026-10-02
+		id: "0001-provider-dedyn",
+		probe: () =>
+			db
+				.query("SELECT sql FROM sqlite_master WHERE type='table' AND name='services'")
+				.get()?.sql?.includes("'dedyn'") ?? false,
+		up: () =>
+			db.transaction(() => {
+				db.exec(`
+					CREATE TABLE services_new (
+						id INTEGER PRIMARY KEY AUTOINCREMENT,
+						name TEXT NOT NULL UNIQUE,
+						provider TEXT NOT NULL CHECK (provider IN ('namecheap', 'cloudflare', 'dedyn')),
+						username TEXT,
+						password TEXT,
+						status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'paused')),
+						interval_sec INTEGER NOT NULL DEFAULT 300 CHECK (interval_sec >= 60),
+						created_at TEXT NOT NULL DEFAULT (datetime('now')),
+						updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+					);
+					INSERT INTO services_new SELECT * FROM services;
+					DROP TABLE services;
+					ALTER TABLE services_new RENAME TO services;
+				`);
+			})(),
+	},
+];
+
+db.exec("CREATE TABLE IF NOT EXISTS schema_migrations (id TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT (datetime('now')))");
+const applied = new Set(db.query("SELECT id FROM schema_migrations").all().map((r) => r.id));
+for (const m of MIGRATIONS) {
+	if (applied.has(m.id)) continue;
+	if (m.probe()) {
+		db.query("INSERT INTO schema_migrations (id) VALUES (?)").run(m.id);
+		continue;
+	}
+	m.up();
+	db.query("INSERT INTO schema_migrations (id) VALUES (?)").run(m.id);
+	logger.info(`[DB] migration applied: ${m.id}`);
+}
 
 export const getServices = () =>
 	db
