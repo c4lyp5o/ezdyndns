@@ -7,7 +7,7 @@
 		"test": "bun test"
 	},
 	"dependencies": {
-		"deadslog": "latest",
-		"elysia": "^1.4.0"
+		"deadslog": "^2.0.0",
+		"elysia": "^1.4.30"
 	}
 }

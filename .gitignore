@@ -11,4 +11,5 @@ db/*.db-wal
 .env.*
 !*.env.example
 
-frontend/public/htmx.min.js
+# design-tool working files (screenshots, direction sheet)
+.taste-skill/
