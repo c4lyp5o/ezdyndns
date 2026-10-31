@@ -2,12 +2,46 @@
 
 All notable changes to ezdyndns are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
-[Semantic Versioning](https://semver.org/). While the version is below 1.0, a
-minor bump may change behaviour; such changes are listed under **Changed**.
+[Semantic Versioning](https://semver.org/). From 1.0.0 the public surface is the
+HTTP API under `/api`, the environment variables and the database schema: a breaking
+change to any of them bumps the major version. Migrations only move forward, so back
+up `db/ezdyndns.db` before upgrading.
+
+0.2.0 and 0.3.0 were never tagged; their notes are kept below as the history of what
+1.0.0 contains.
 
 ## [Unreleased]
 
-## [0.3.0] - 2026-10-31
+## [1.0.0] - 2026-10-31
+
+First stable release: everything since 0.1.0, listed in detail under 0.3.0 and 0.2.0.
+
+### Highlights
+- **Dashboard** in a network-ops layout: a headline that says whether every record points at
+  your IP, public IP with address history, a three.js propagation view, record health with a
+  per-record DNS check, services with an edit dialog, a filterable push log with CSV export.
+- **Ten providers**: Namecheap, Cloudflare, deSEC, Duck DNS, Porkbun, DigitalOcean, Gandi,
+  FreeDNS (afraid.org), No-IP and any dyndns2 server. A and AAAA records (all but Namecheap).
+- **Safer updates**: the public IP needs two sources to agree; rejected credentials hold a
+  record until you press Retry; rate limits and repeated failures back off; push-on-change
+  providers aren't sent repeat updates.
+- **DNS toolbox**: lookups across authoritative and public resolvers, mail checks (MX, SPF,
+  DMARC, DKIM) and reverse DNS, in the dashboard and at `/api/tools/*`.
+- **Notifications** to ntfy, a webhook, Discord and Gotify, including recovery.
+- **Docker image** on `ghcr.io/c4lyp5o/ezdyndns`, with CI, tests on two Bun versions, and tagged
+  releases.
+
+### Upgrading from 0.1.0
+- Back up `db/ezdyndns.db`. Three migrations run on first boot: `0002` drops the provider CHECK,
+  `0003` rebuilds `domains` with record types and holds (ids kept). They were rehearsed on a copy
+  of a live database with no rows lost.
+- `restartScheduler` no longer runs an immediate check; new and resumed services are pushed
+  straight away instead.
+- deSEC updates now send the other address family as `preserve`. Before, an update could delete
+  the record's AAAA. Check any deSEC record that should have one.
+- The HTTP API is backward compatible with 0.1.0; everything new is additive.
+
+## [0.3.0] - 2026-10-31 (not tagged)
 
 ### Added
 - DNS toolbox panel and `/api/tools/*`: lookups of any common record type across the zone's
@@ -51,7 +85,7 @@ minor bump may change behaviour; such changes are listed under **Changed**.
 - Long TXT records (SPF, DKIM) are read whole; Bun's `resolveTxt` keeps only the first 255-byte string.
 - The scheduler's startup log no longer prints `interval nonems`; three old lint warnings are fixed.
 
-## [0.2.0] - 2026-10-31
+## [0.2.0] - 2026-10-31 (not tagged)
 
 ### Added
 - Five DNS providers: Duck DNS, Porkbun, DigitalOcean, Gandi LiveDNS and FreeDNS (afraid.org).
@@ -122,7 +156,5 @@ minor bump may change behaviour; such changes are listed under **Changed**.
 - htmx dashboard with a provider-aware add-service form.
 - Docker image with a healthcheck and a Traefik-ready compose file.
 
-[Unreleased]: https://github.com/c4lyp5o/ezdyndns/compare/v0.3.0...HEAD
-[0.3.0]: https://github.com/c4lyp5o/ezdyndns/compare/v0.2.0...v0.3.0
-[0.2.0]: https://github.com/c4lyp5o/ezdyndns/compare/v0.1.0...v0.2.0
-[0.1.0]: https://github.com/c4lyp5o/ezdyndns/releases/tag/v0.1.0
+[Unreleased]: https://github.com/c4lyp5o/ezdyndns/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/c4lyp5o/ezdyndns/releases/tag/v1.0.0
