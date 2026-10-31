@@ -306,7 +306,8 @@ dialog::backdrop { background: rgba(8, 8, 10, .72); }
 .rec-list { list-style: none; margin-bottom: 12px; }
 .rec-list li { display: flex; justify-content: space-between; align-items: center; height: 38px; border-bottom: 1px solid var(--rule); }
 .add-record { display: grid; grid-template-columns: 1fr 1fr auto; gap: 12px; align-items: end; }
-.add-record:has(> :nth-child(4)) { grid-template-columns: 1fr 1fr 1fr auto; }
+.add-record:has(> label:nth-of-type(3)) { grid-template-columns: 1fr 1fr 1fr auto; }
+.add-record > .form-result { grid-column: 1 / -1; }
 .danger-zone .ghost { margin-top: 12px; }
 
 /* ---------- lock screen ---------- */
@@ -345,7 +346,7 @@ body.authed #lockscreen { display: none; }
 	.panel { padding: 16px; }
 	.topo-stage, .topo-fallback svg { height: 260px; }
 	.primary, .ghost { height: 44px; }
-	.field-grid, .add-record, .add-record:has(> :nth-child(4)) { grid-template-columns: 1fr; }
+	.field-grid, .add-record, .add-record:has(> label:nth-of-type(3)) { grid-template-columns: 1fr; }
 	input, select { height: 44px; }
 	.log-filter { width: 100%; gap: 12px; }
 	.log-filter select { flex: 1; min-width: 0; }

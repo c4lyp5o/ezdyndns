@@ -99,34 +99,27 @@ dialog.addEventListener("click", (e) => {
 });
 
 // ---------- add-service form: fields follow the provider ----------
-const CREDENTIALS = {
-	namecheap: {
-		show: "password",
-		label: "Dynamic DNS password",
-		hint: "Namecheap: Advanced DNS → Dynamic DNS. The password is checked on the first push.",
-	},
-	cloudflare: {
-		show: "username",
-		label: "API token",
-		hint: "Cloudflare: an API token with Zone · DNS · Edit. Verified before the service is saved.",
-	},
-	dedyn: {
-		show: "username",
-		label: "Token",
-		hint: "deSEC: a dedicated token scoped to domain/update/ttl/ip4, TTL at or under the check interval. Verifying it sends one real update.",
-	},
-};
-
+// The server renders the provider catalog into data-catalog (backend/services/catalog.js).
 function syncProviderForm(form) {
 	if (!form) return;
-	const cfg = CREDENTIALS[form.querySelector("[data-provider]").value] ?? CREDENTIALS.namecheap;
+	const catalog = JSON.parse(form.dataset.catalog);
+	const cfg = catalog[form.querySelector("[data-provider]").value] ?? Object.values(catalog)[0];
 	for (const field of form.querySelectorAll("[data-cred]")) {
-		const on = field.dataset.cred === cfg.show;
-		field.hidden = !on;
-		field.querySelector("input").disabled = !on;
-		if (on) field.querySelector("[data-cred-label]").textContent = cfg.label;
+		const spec = cfg.fields.find((f) => f.name === field.dataset.cred);
+		field.hidden = !spec;
+		field.querySelector("input").disabled = !spec;
+		if (spec) field.querySelector("[data-cred-label]").textContent = spec.label;
 	}
 	form.querySelector("[data-cred-hint]").textContent = cfg.hint;
+	// Duck DNS serves one zone: fill it in, and clear it again on switching away.
+	const domain = form.querySelector("[data-domain]");
+	if (cfg.domain) {
+		domain.value = cfg.domain;
+		domain.dataset.filled = "";
+	} else if ("filled" in domain.dataset) {
+		domain.value = "";
+		delete domain.dataset.filled;
+	}
 }
 dialog.addEventListener("change", (e) => {
 	if (e.target.matches("[data-provider]")) syncProviderForm(e.target.closest("form"));

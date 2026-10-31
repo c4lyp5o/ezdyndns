@@ -83,6 +83,39 @@ const MIGRATIONS = [
 				`);
 			})(),
 	},
+	{
+		// Duck DNS, Porkbun, DigitalOcean, Gandi and FreeDNS added 2026-10-31. The
+		// provider list now lives in services/catalog.js and is checked by the API,
+		// so the CHECK is dropped instead of rebuilding the table for every provider.
+		// foreign_keys is off on this connection, so DROP TABLE leaves domains alone.
+		id: "0002-provider-check-in-code",
+		probe: () =>
+			!(
+				db
+					.query("SELECT sql FROM sqlite_master WHERE type='table' AND name='services'")
+					.get()
+					?.sql?.includes("CHECK (provider") ?? true
+			),
+		up: () =>
+			db.transaction(() => {
+				db.exec(`
+					CREATE TABLE services_new (
+						id INTEGER PRIMARY KEY AUTOINCREMENT,
+						name TEXT NOT NULL UNIQUE,
+						provider TEXT NOT NULL,
+						username TEXT,
+						password TEXT,
+						status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'paused')),
+						interval_sec INTEGER NOT NULL DEFAULT 300 CHECK (interval_sec >= 60),
+						created_at TEXT NOT NULL DEFAULT (datetime('now')),
+						updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+					);
+					INSERT INTO services_new SELECT * FROM services;
+					DROP TABLE services;
+					ALTER TABLE services_new RENAME TO services;
+				`);
+			})(),
+	},
 ];
 
 db.exec("CREATE TABLE IF NOT EXISTS schema_migrations (id TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT (datetime('now')))");
@@ -180,6 +213,12 @@ export const domainIsCurrent = (domainId, ip) =>
 			.query("SELECT 1 FROM updates WHERE domain_id = ? AND new_ip = ? AND ok = 1 ORDER BY id DESC LIMIT 1")
 			.get(domainId, ip),
 	);
+
+// The newest successful push for one record, for providers that push only on change.
+export const lastGoodPush = (domainId) =>
+	db
+		.query("SELECT new_ip, created_at FROM updates WHERE domain_id = ? AND ok = 1 ORDER BY id DESC LIMIT 1")
+		.get(domainId);
 
 export const recentUpdates = (limit = 25, { domainId, failedOnly } = {}) => {
 	const where = [];

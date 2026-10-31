@@ -1,10 +1,13 @@
 import logger from "./logger";
-import { getDomains, getServices, getState, logUpdate, setState, pruneUpdates, recordIpChange, recentIpChanges } from "./db";
+import { getDomains, getServices, getState, lastGoodPush, logUpdate, setState, pruneUpdates, recordIpChange, recentIpChanges } from "./db";
+import { CATALOG } from "./services/catalog";
 import { getPublicIp } from "./services/ipcheck";
 import { updateRecord } from "./services/providers";
 import { notify } from "./services/notify";
 
 const CHECK_TIMEOUT_MS = 10000;
+// pushOnChange providers still re-assert a same-IP record once a day.
+const REASSERT_MS = 24 * 60 * 60 * 1000;
 let timer = null;
 let inflight = null;
 let started = false;
@@ -33,7 +36,9 @@ async function runCheck() {
 
 	for (const service of getServices()) {
 		if (service.status !== "active") continue;
+		const onChangeOnly = CATALOG[service.provider]?.pushOnChange;
 		for (const domain of getDomains(service.id)) {
+			if (onChangeOnly && isCurrent(domain.id, current.ip)) continue;
 			// Namecheap returns ErrCount 0 / Done true even for a same-IP update
 			// (verified live 2026-09-19), so we push EVERY cycle. Each interval
 			// produces a logged success/failure row; a DDNS daemon should keep
@@ -73,6 +78,13 @@ async function runCheck() {
 
 	maybeNotify({ changed, ip: current.ip, source: current.source, results }, last);
 	return { changed, ip: current.ip, source: current.source, results };
+}
+
+// True when the record's last good push already set this IP within a day.
+function isCurrent(domainId, ip) {
+	const last = lastGoodPush(domainId);
+	if (!last || last.new_ip !== ip) return false;
+	return Date.now() - Date.parse(`${last.created_at.replace(" ", "T")}Z`) < REASSERT_MS;
 }
 
 // Push notification on IP change and on any failed cycle.

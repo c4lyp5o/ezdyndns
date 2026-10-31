@@ -1,7 +1,8 @@
 import { Elysia } from "elysia";
 import { getServices, getService, getDomains, createService, updateService, addDomain, deleteDomain, deleteService, setStatus, recentUpdates, getState, sanitizeService, domainHealth, recentIpChanges } from "../db";
 import { restartScheduler, checkOnce } from "../scheduler";
-import { PROVIDERS, verifyProvider, verifyCredentialChange } from "../services/providers";
+import { CATALOG, PROVIDERS, verifyProvider, verifyCredentialChange } from "../services/providers";
+import { duckSubname } from "../services/duckdns";
 import logger from "../logger";
 
 import config from "../config";
@@ -119,9 +120,10 @@ export const api = new Elysia({ prefix: "/api" })
 			set.status = 404;
 			return { message: "service not found" };
 		}
-		if (!body.hostname || !body.domainname) {
+		const problem = validateRecord(getService(id), body ?? {}, getDomains(id).length);
+		if (problem) {
 			set.status = 400;
-			return { message: "hostname and domainname are required" };
+			return { message: problem };
 		}
 		addDomain(id, body);
 		return { ok: true };
@@ -157,6 +159,18 @@ export const api = new Elysia({ prefix: "/api" })
 		const result = await checkOnce();
 		return result;
 	});
+// A record added to an existing service. Returns a message, or null when valid.
+export function validateRecord(service, { hostname, domainname, password }, existing = 0) {
+	if (!hostname || !domainname) return "Host and domain are both required.";
+	if (service.provider === "duckdns" && !duckSubname({ hostname, domainname }))
+		return "Duck DNS records are <subname>.duckdns.org: host is the subname, domain is duckdns.org.";
+	// The service's own token belongs to its first record; every other record
+	// needs its own (FreeDNS tokens are per record).
+	if (CATALOG[service.provider]?.perRecord?.required && existing > 0 && !password)
+		return `${CATALOG[service.provider].label} needs this record's own update token.`;
+	return null;
+}
+
 export function validateServiceEdit({ name, interval_sec, status }) {
 	if (name !== undefined && !String(name).trim()) return "name cannot be empty";
 	if (interval_sec !== undefined && interval_sec !== "" && !(Number(interval_sec) >= 60))

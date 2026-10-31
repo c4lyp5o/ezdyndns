@@ -17,8 +17,9 @@ import {
 	recentIpChanges,
 } from "../db";
 import { restartScheduler, checkOnce } from "../scheduler";
-import { PROVIDERS, verifyProvider, verifyCredentialChange } from "../services/providers";
-import { validateServiceEdit } from "./api";
+import { CATALOG, PROVIDERS, verifyProvider, verifyCredentialChange } from "../services/providers";
+import { formCatalog } from "../services/catalog";
+import { validateRecord, validateServiceEdit } from "./api";
 import config from "../config";
 
 const esc = (s) =>
@@ -45,27 +46,8 @@ const intervalLabel = (sec) => {
 	return mins < 1 ? `${sec} s` : `${mins} min`;
 };
 
-const PROVIDER_LABEL = { namecheap: "Namecheap", cloudflare: "Cloudflare", dedyn: "deSEC" };
+const PROVIDER_LABEL = Object.fromEntries(Object.entries(CATALOG).map(([id, p]) => [id, p.label]));
 const INTERVALS = [60, 120, 300, 600, 900, 1800];
-
-// Which credential each provider stores where, and what to call it.
-const CREDENTIAL = {
-	namecheap: {
-		field: "password",
-		edit: "New Dynamic DNS password",
-		hint: "From Advanced DNS → Dynamic DNS. Namecheap can only check it on the next push, so watch the record's state after saving.",
-	},
-	cloudflare: {
-		field: "username",
-		edit: "New API token",
-		hint: "Needs Zone · DNS · Edit. A new token is verified with Cloudflare before it is saved.",
-	},
-	dedyn: {
-		field: "username",
-		edit: "New token",
-		hint: "Scope it to domain/update/ttl/ip4 with a TTL at or under the check interval. A new token is verified with one real update before it is saved.",
-	},
-};
 
 // What a record's last pushes say about it right now.
 function recordState(d, ip) {
@@ -279,7 +261,7 @@ const intervalOptions = (selected) =>
 function newServicePartial() {
 	const providerOpts = PROVIDERS.map((p) => `<option value="${p}">${esc(PROVIDER_LABEL[p] ?? p)}</option>`).join("");
 	return `
-<form class="sheet" hx-post="/partials/services" hx-disable="find button[type=submit]" data-close-on-success data-provider-form>
+<form class="sheet" hx-post="/partials/services" hx-disable="find button[type=submit]" data-close-on-success data-provider-form data-catalog="${esc(JSON.stringify(formCatalog()))}">
 	<header class="sheet-head"><h2>Add service</h2><button type="button" class="icon-btn" data-close aria-label="Close">×</button></header>
 	<div class="field-grid">
 		<label class="field"><span>Provider</span><select name="provider" data-provider>${providerOpts}</select></label>
@@ -292,7 +274,7 @@ function newServicePartial() {
 	<h3 class="sub-title">First record</h3>
 	<div class="field-grid">
 		<label class="field"><span>Host</span><input name="hostname" placeholder="home or @" autocomplete="off"></label>
-		<label class="field"><span>Domain</span><input name="domainname" placeholder="domain.tld" autocomplete="off"></label>
+		<label class="field"><span>Domain</span><input name="domainname" placeholder="domain.tld" autocomplete="off" data-domain></label>
 	</div>
 	<p class="form-result" data-result role="status" aria-live="polite"></p>
 	<footer class="sheet-foot"><button type="button" class="ghost" data-close>Cancel</button><button type="submit" class="primary">Verify and add</button></footer>
@@ -302,8 +284,17 @@ function newServicePartial() {
 function editServicePartial(id) {
 	const s = getService(id);
 	if (!s) return `<p class="empty">That service no longer exists.</p>`;
-	const cred = CREDENTIAL[s.provider] ?? CREDENTIAL.namecheap;
+	const meta = CATALOG[s.provider] ?? CATALOG.namecheap;
 	const records = getDomains(id);
+	const credFields = meta.fields
+		.map(
+			(f) =>
+				`<label class="field"><span>${esc(f.edit)}</span><input name="${f.name}" type="password" autocomplete="off" placeholder="Leave blank to keep the current one"></label>`,
+		)
+		.join("");
+	const perRecord = meta.perRecord
+		? `<label class="field"><span>${esc(meta.perRecord.label)}</span><input name="password" type="password" autocomplete="off" ${meta.perRecord.required && records.length > 0 ? "required" : `placeholder="Optional"`}></label>`
+		: "";
 	const recordRows = records
 		.map(
 			(d) => `<li><span class="mono">${esc(fqdnOf(d))}</span>
@@ -317,7 +308,7 @@ function editServicePartial(id) {
 		<div class="field-grid">
 			<label class="field"><span>Name</span><input name="name" value="${esc(s.name)}" required autocomplete="off"></label>
 			<label class="field"><span>Check every</span><select name="interval_sec">${intervalOptions(s.interval_sec)}</select></label>
-			<label class="field"><span>${esc(cred.edit)}</span><input name="${cred.field}" type="password" autocomplete="off" placeholder="Leave blank to keep the current one"></label>
+			${credFields}
 			<fieldset class="field"><legend>Updates</legend>
 				<div class="seg">
 					<label><input type="radio" name="status" value="active"${s.status === "active" ? " checked" : ""}><span>Active</span></label>
@@ -325,7 +316,7 @@ function editServicePartial(id) {
 				</div>
 			</fieldset>
 		</div>
-		<p class="hint">${esc(cred.hint)}</p>
+		<p class="hint">${esc(meta.editHint)}</p>
 		<p class="form-result" data-result role="status" aria-live="polite"></p>
 		<footer class="sheet-foot"><button type="submit" class="primary">Save changes</button></footer>
 	</form>
@@ -335,9 +326,10 @@ function editServicePartial(id) {
 		${records.length ? `<ul class="rec-list">${recordRows}</ul>` : `<p class="empty">No records. Add one below.</p>`}
 		<form class="add-record" hx-post="/partials/services/${id}/domains" hx-target="#dialog-body">
 			<label class="field"><span>Host</span><input name="hostname" required placeholder="home or @" autocomplete="off"></label>
-			<label class="field"><span>Domain</span><input name="domainname" required placeholder="domain.tld" autocomplete="off"></label>
-			${s.provider === "namecheap" ? `<label class="field"><span>Per-domain password</span><input name="password" type="password" autocomplete="off" placeholder="Optional"></label>` : ""}
+			<label class="field"><span>Domain</span><input name="domainname" required ${meta.domain ? `value="${esc(meta.domain)}"` : `placeholder="domain.tld"`} autocomplete="off"></label>
+			${perRecord}
 			<button type="submit" class="ghost">Add record</button>
+			<p class="form-result" data-result role="status" aria-live="polite"></p>
 		</form>
 	</section>
 
@@ -448,9 +440,10 @@ export const partials = new Elysia({ prefix: "/partials" })
 			set.status = 404;
 			return { message: "That service no longer exists." };
 		}
-		if (!body.hostname || !body.domainname) {
+		const problem = validateRecord(getService(id), body ?? {}, getDomains(id).length);
+		if (problem) {
 			set.status = 400;
-			return { message: "Host and domain are both required." };
+			return { message: problem };
 		}
 		try {
 			addDomain(id, body);
