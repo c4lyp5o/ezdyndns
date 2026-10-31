@@ -7,6 +7,50 @@ minor bump may change behaviour; such changes are listed under **Changed**.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-31
+
+### Added
+- DNS toolbox panel and `/api/tools/*`: lookups of any common record type across the zone's
+  authoritative nameservers and Cloudflare, Google and Quad9; mail checks (MX, SPF with the
+  10-lookup limit counted through includes, DMARC, DKIM by selector); reverse DNS with forward
+  confirmation.
+- Resolution check: each record shows whether its nameservers and public resolvers answer with the
+  IP last pushed (Resolves, Propagating, Mismatch, Unknown). Clicking it opens the lookup.
+- AAAA records for every provider except Namecheap, with IPv6 detection while one is active.
+- No-IP and generic dyndns2 providers (custom update server), both push-on-change.
+- Holds and back-off: a hard failure (rejected credentials, unknown host, dyndns2 `badauth`/`abuse`)
+  holds the record until Retry and sends one "needs attention" notification; rate limits wait as
+  asked; three failures in a row back off exponentially up to an hour.
+- Push / Retry per record, showing the provider's reply.
+- Edit a record's host, domain, type or token in place.
+- Skipped cycles are logged (`ok = 2`) and drawn as outlined ticks; the log gains a Sent filter
+  and CSV export (`GET /api/updates.csv`).
+- Notifications to a generic webhook, Discord and Gotify alongside ntfy, plus "recovered",
+  "needs attention" and "IP check inconclusive" events.
+- `/api/health` adds `records`, `failing`, `held` and `check_error`.
+- `EZDYNDNS_KEEP_SUCCESS_DAYS`, `EZDYNDNS_KEEP_FAILURE_DAYS`, `EZDYNDNS_CONTACT`,
+  `EZDYNDNS_RESOLVE_CHECKS`.
+
+### Changed
+- The public IP needs two sources to agree (all are asked at once); a lone answer counts only if it
+  matches the last known IP. Otherwise the cycle pushes nothing.
+- Each service is pushed on its own interval instead of every service at the shortest one; an IP
+  change still pushes everything at once.
+- A service is pushed right after it is added or resumed, and a record right after it is added or
+  edited, instead of waiting for the next interval.
+- Migration `0003-records-holds-settings` rebuilds `domains` (ids kept) with `record_type` and hold
+  columns and a UNIQUE that includes the type, and adds `services.options`. New `resolutions` table.
+- "Last good push" moved into each record's sub-line to make room for the DNS column.
+
+### Fixed
+- deSEC updates no longer delete the record's AAAA (or A): the other address family is sent as
+  `preserve`. Before, an update without an IPv6 parameter deleted the AAAA unless it arrived over IPv6.
+- Deleting a service or record now deletes its history; foreign keys are off on this connection, so
+  `ON DELETE CASCADE` never ran.
+- Cloudflare apex records (`@`) were looked up as `@.domain`.
+- Long TXT records (SPF, DKIM) are read whole; Bun's `resolveTxt` keeps only the first 255-byte string.
+- The scheduler's startup log no longer prints `interval nonems`; three old lint warnings are fixed.
+
 ## [0.2.0] - 2026-10-31
 
 ### Added
@@ -78,6 +122,7 @@ minor bump may change behaviour; such changes are listed under **Changed**.
 - htmx dashboard with a provider-aware add-service form.
 - Docker image with a healthcheck and a Traefik-ready compose file.
 
-[Unreleased]: https://github.com/c4lyp5o/ezdyndns/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/c4lyp5o/ezdyndns/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/c4lyp5o/ezdyndns/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/c4lyp5o/ezdyndns/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/c4lyp5o/ezdyndns/releases/tag/v0.1.0
