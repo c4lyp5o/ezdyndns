@@ -21,9 +21,26 @@ concept on the ez stack.
 - deadslog logging, Biome lint
 
 ## Providers
-- **namecheap** — dynamicdns.park-your-domain.com DDNS API (password = your DDNS key)
-- **cloudflare** — API v4 (username = API token; finds zone, creates or patches the A record)
-- **dedyn** — deSEC stack (dedyn.io) dynDNS update API; username = deSEC STS token, sent as an
+The list lives in `backend/services/catalog.js` (labels, credential fields, form copy); each
+provider's adapter is in `backend/services/`. Adding one is a catalog entry plus an adapter.
+
+| Provider | Credential | Verified before saving | Notes |
+|---|---|---|---|
+| **namecheap** | Dynamic DNS password (per domain, optional per record) | No, on the first push | dynamicdns.park-your-domain.com |
+| **cloudflare** | API token (Zone · DNS · Edit) | Yes | Finds the zone, creates or patches the A record |
+| **dedyn** (deSEC) | Token scoped `domain/update/ttl/ip4` | Yes, one real update | Details below |
+| **duckdns** | Account token | Yes, one real update | Records are `<subname>.duckdns.org` |
+| **porkbun** | API key + secret API key | Yes, read-only | The domain must have API access turned on |
+| **digitalocean** | Personal access token (domain read/update) | Yes, read-only | Creates the record if missing, TTL 60 s |
+| **gandi** | Personal access token (LiveDNS) | Yes, read-only | PUTs the rrset, TTL 300 s (the minimum) |
+| **afraid** (FreeDNS) | The record's update URL or token | Yes, one real update | One token per record; pushes only when the IP changes, plus once a day |
+
+Read-before-write providers (Cloudflare, Porkbun, DigitalOcean, Gandi) skip the write when the
+record already holds the IP. FreeDNS publishes no API spec; the adapter follows ddclient's
+`freedns` protocol (`update.php?<token>&address=<ip>`, success when the reply says `Updated`) and
+refuses a reply that names a different host, so a token copied from another record can't move it.
+
+**deSEC details.** username = deSEC STS token, sent as an
   `Authorization: Token …` header. Use a dedicated token scoped `domain/update/ttl/ip4` with TTL ≤
   the check interval. The token is verified against the dynDNS update endpoint itself before the
   service is stored (200 + `good` = valid): deSEC's `GET /api/v1/tokens/self/` answers 404 for
@@ -74,7 +91,7 @@ Never point a local run at the `db/` a running container uses: set `EZDYNDNS_DB`
 
 CI (`ci.yml`) lints, checks that every vendored file the page loads is committed, and builds and
 smoke-tests the Docker image on pushes and pull requests to `master` and `development`. The
-**Test** workflow (`test.yml`) runs `bun test` on Bun 1.3.8 (the image's version) and the latest Bun.
+**Test** workflow (`test.yml`) runs `bun test` on Bun 1.4.4 (the image's version) and the latest Bun.
 
 ## Deploy (Docker)
 ```bash
@@ -109,8 +126,11 @@ rebuilds — the container must run as a uid that can write those directories.
 - `GET  /api/updates?limit=25&domain_id=&failed=1` — update log, optionally one record / failures only
 - `GET  /api/domains` — per-record health: last 24 pushes, last success, consecutive failures
 - `GET  /api/ip-changes?limit=20` — observed public-IP changes (kept apart from the pruned log)
-- `POST /api/services` — `{ name, provider, username?, password?, interval_sec?, domains? }`
-- `POST /api/services/:id/domains` — `{ hostname, domainname }`
+- `POST /api/services` — `{ name, provider, username?, password?, interval_sec?, domains? }`; `provider` is one of
+  `namecheap cloudflare dedyn duckdns porkbun digitalocean gandi afraid`. Porkbun takes the API key as
+  `username` and the secret as `password`; FreeDNS and Namecheap take their key as `password`.
+- `POST /api/services/:id/domains` — `{ hostname, domainname, password? }`; `password` is the record's own
+  Namecheap password or FreeDNS token (required for a FreeDNS service's second and later records)
 - `DELETE /api/services/:id/domains/:domainId`
 - `PATCH /api/services/:id` — `{ name?, interval_sec?, status?, username?, password? }`; provider is fixed,
   a replaced credential is verified first (`422` on failure), a duplicate name is `409`
