@@ -103,9 +103,15 @@ smoke-tests the Docker image on pushes and pull requests to `master` and `develo
 
 ## Deploy (Docker)
 ```bash
-docker compose build
-docker compose up -d
+# GHCR packages are private by default; log in once with a token that has read:packages
+gh auth token | docker login ghcr.io -u <github-user> --password-stdin
+docker compose pull
+docker compose up -d --no-build
 ```
+`compose.yml` runs `ghcr.io/c4lyp5o/ezdyndns:${EZDYNDNS_VERSION:-1.0.0}`; set `EZDYNDNS_VERSION` to
+deploy another release. To run a local build instead:
+`EZDYNDNS_IMAGE=ezdyndns-local docker compose up -d --build`. Back up `db/ezdyndns.db` before an
+upgrade: migrations run on first boot and only move forward.
 The compose file expects an external `traefik_default` network and a
 `traefik.http.routers.ezdyndns.rule=Host(...)` host. Set `EZDYNDNS_HOSTNAME`
 (and `EZDYNDNS_HOST=0.0.0.0`) in the environment or a `.env` beside the

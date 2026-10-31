@@ -12,6 +12,10 @@ up `db/ezdyndns.db` before upgrading.
 
 ## [Unreleased]
 
+### Changed
+- `compose.yml` runs the released GHCR image (`EZDYNDNS_VERSION`, default 1.0.0) instead of
+  building locally; `EZDYNDNS_IMAGE` switches back to a local build.
+
 ## [1.0.0] - 2026-10-31
 
 First stable release: everything since 0.1.0, listed in detail under 0.3.0 and 0.2.0.
