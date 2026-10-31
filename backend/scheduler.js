@@ -1,19 +1,33 @@
 import logger from "./logger";
-import { getDomains, getServices, getState, logUpdate, setState, pruneUpdates } from "./db";
+import { getDomains, getServices, getState, logUpdate, setState, pruneUpdates, recordIpChange, recentIpChanges } from "./db";
 import { getPublicIp } from "./services/ipcheck";
 import { updateRecord } from "./services/providers";
 import { notify } from "./services/notify";
 
 const CHECK_TIMEOUT_MS = 10000;
 let timer = null;
-let running = false;
+let inflight = null;
+let started = false;
 
-export async function checkOnce() {
+// Single-flight: the timer, the startup check and POST /check share one
+// in-progress run instead of overlapping provider calls (deSEC allows only
+// 2 updates / 2 min per account).
+export function checkOnce() {
+	inflight ??= runCheck().finally(() => {
+		inflight = null;
+	});
+	return inflight;
+}
+
+async function runCheck() {
 	const current = await getPublicIp();
 	const last = getState("last_ip")?.value;
 	const changed = last !== current.ip;
 
+	// The first check on an install that predates ip_changes seeds a baseline row.
+	if (changed || recentIpChanges(1).length === 0) recordIpChange(current.ip, last, current.source);
 	setState("last_ip", current.ip);
+	setState("last_source", current.source);
 	setState("last_check", new Date().toISOString());
 	const results = [];
 
@@ -101,19 +115,18 @@ function nextIntervalMs() {
 function scheduleNext() {
 	if (timer) clearTimeout(timer);
 	const intervalMs = nextIntervalMs();
+	// The dashboard's "next check" countdown reads this.
+	setState("next_check", intervalMs ? new Date(Date.now() + intervalMs).toISOString() : "");
 	if (!intervalMs) return;
 
 	// One serialized loop. The shortest active interval controls the IP-check
 	// cadence; provider calls remain conditional on a changed/unreconciled IP.
 	timer = setTimeout(async () => {
-		if (running) return scheduleNext();
-		running = true;
 		try {
 			await checkOnce();
 		} catch (err) {
 			logger.error(`[SCHED] check failed: ${err.message}`);
 		} finally {
-			running = false;
 			scheduleNext();
 		}
 	}, intervalMs);
@@ -144,6 +157,8 @@ function startWatchdog() {
 let lastWatchdogFired = null;
 
 export function startScheduler() {
+	if (started) return restartScheduler();
+	started = true;
 	scheduleNext();
 	checkOnce().catch((err) => {
 		logger.error(`[SCHED] initial check failed: ${err.message}`);
@@ -165,7 +180,9 @@ export function stopScheduler() {
 	logger.info("[SCHED] scheduler stopped");
 }
 
+// Re-derive the timer after a service change. Does NOT run an immediate check
+// or re-register the prune/watchdog intervals (those are process-lifetime).
 export function restartScheduler() {
-	stopScheduler();
-	startScheduler();
+	scheduleNext();
+	logger.info(`[SCHED] rescheduled; interval ${nextIntervalMs() ?? "none"}ms`);
 }

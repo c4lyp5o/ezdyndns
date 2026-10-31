@@ -120,7 +120,7 @@ export async function verifyProvider({ provider, username, password, hostname, d
 		if (!username) return { ok: false, detail: "cloudflare needs an API token" };
 		try {
 			const res = await fetch("https://api.cloudflare.com/client/v4/user/tokens/verify", {
-				headers: { Authorization: `Token ${username}`, "Content-Type": "application/json" },
+				headers: { Authorization: `Bearer ${username}`, "Content-Type": "application/json" },
 				signal: AbortSignal.timeout(10000),
 			});
 			const j = await res.json().catch(() => ({}));
@@ -140,3 +140,18 @@ export async function verifyProvider({ provider, username, password, hostname, d
 }
 
 export { dedynScope };
+// Re-verify only the credential an edit actually replaces. cloudflare and dedyn
+// keep their token in `username`; namecheap keeps its DDNS key in `password`.
+// Returns null when the edit touches no credential (nothing to check).
+export async function verifyCredentialChange(service, domain, { username, password }) {
+	const tokenProvider = service.provider === "cloudflare" || service.provider === "dedyn";
+	if (tokenProvider && !username) return null;
+	if (!tokenProvider && !password) return null;
+	return verifyProvider({
+		provider: service.provider,
+		username,
+		password,
+		hostname: domain?.hostname,
+		domainname: domain?.domainname,
+	});
+}
