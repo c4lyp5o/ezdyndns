@@ -38,6 +38,8 @@ minor bump may change behaviour; such changes are listed under **Changed**.
 - Checks are single-flight: a manual check during a scheduled one joins it instead of starting a
   second run, and restarting the scheduler no longer leaks intervals.
 - `biome.json` migrated to the Biome 2 format; the vendored files are excluded from linting.
+- deadslog 1.3.1 → 2.0.0 (its range is now `^2.0.0` instead of `latest`); indirect dependencies
+  refreshed within their ranges.
 
 ### Fixed
 - Cloudflare credential verification sends `Authorization: Bearer`, so valid API tokens are no
