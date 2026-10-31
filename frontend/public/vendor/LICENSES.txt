@@ -1,0 +1,5 @@
+htmx.org 4.0.0 — 0BSD — https://github.com/bigskysoftware/htmx
+three 0.186.1 — MIT — https://github.com/mrdoob/three.js
+motion 14.3.0 — MIT — https://github.com/motiondivision/motion
+Public Sans (@fontsource/public-sans 5.3.0) — OFL-1.1
+IBM Plex Mono (@fontsource/ibm-plex-mono 5.3.0) — OFL-1.1
