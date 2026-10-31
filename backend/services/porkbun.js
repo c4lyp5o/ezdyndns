@@ -14,8 +14,24 @@ const headers = (apiKey, secret) => ({
 
 // Porkbun takes the subdomain alone; empty for the apex.
 const sub = (hostname) => (!hostname || hostname === "@" ? "" : hostname);
-const byNameType = (action, { hostname, domainname }) =>
-	`${API}/dns/${action}/${encodeURIComponent(domainname)}/A${sub(hostname) ? `/${encodeURIComponent(sub(hostname))}` : ""}`;
+const byNameType = (action, { hostname, domainname, record_type }) =>
+	`${API}/dns/${action}/${encodeURIComponent(domainname)}/${record_type === "AAAA" ? "AAAA" : "A"}${sub(hostname) ? `/${encodeURIComponent(sub(hostname))}` : ""}`;
+
+// Codes that mean the keys, scope or domain are wrong; nothing a retry fixes.
+const HARD = new Set([
+	"API_ACCESS_DISABLED",
+	"INVALID_API_KEYS_001",
+	"INSUFFICIENT_SCOPE",
+	"DOMAIN_NOT_FOUND",
+	"INVALID_DOMAIN",
+	"DOMAIN_NOT_ALLOWED",
+	"IP_NOT_ALLOWED",
+]);
+const failure = ({ j, res }) => ({
+	detail: why(j, res),
+	...(res.status === 429 ? { retryAfter: Number(res.headers.get("retry-after")) || 60 } : {}),
+	...(HARD.has(j.code) || res.status === 401 || res.status === 403 ? { hard: true } : {}),
+});
 
 async function post(url, keys, body, signal) {
 	const res = await fetch(url, { method: "POST", headers: keys, body: JSON.stringify(body ?? {}), signal });
@@ -51,9 +67,10 @@ export async function updatePorkbun(service, domain, ip, { signal } = {}) {
 	if (!apiKey || !secret) return { ok: false, detail: "missing Porkbun keys" };
 	const keys = headers(apiKey, secret);
 	const fqdn = domain.hostname === "@" ? domain.domainname : `${domain.hostname}.${domain.domainname}`;
+	const type = domain.record_type === "AAAA" ? "AAAA" : "A";
 
 	const found = await post(byNameType("retrieveByNameType", domain), keys, {}, signal);
-	if (found.j.status !== "SUCCESS") return fail(fqdn, why(found.j, found.res));
+	if (found.j.status !== "SUCCESS") return fail(fqdn, failure(found));
 	const records = found.j.records ?? [];
 	if (records.length > 0 && records.every((r) => r.content === ip)) return { ok: true, detail: "nochg" };
 
@@ -62,12 +79,12 @@ export async function updatePorkbun(service, domain, ip, { signal } = {}) {
 	const write =
 		records.length > 0
 			? await post(byNameType("editByNameType", domain), keys, { content: ip }, signal)
-			: await post(`${API}/dns/create/${encodeURIComponent(domain.domainname)}`, keys, { name: sub(domain.hostname), type: "A", content: ip }, signal);
-	if (write.j.status !== "SUCCESS") return fail(fqdn, why(write.j, write.res));
-	return { ok: true, detail: `${records.length > 0 ? "updated" : "created"} A ${fqdn} -> ${ip}` };
+			: await post(`${API}/dns/create/${encodeURIComponent(domain.domainname)}`, keys, { name: sub(domain.hostname), type, content: ip }, signal);
+	if (write.j.status !== "SUCCESS") return fail(fqdn, failure(write));
+	return { ok: true, detail: `${records.length > 0 ? "updated" : "created"} ${type} ${fqdn} -> ${ip}` };
 }
 
-function fail(fqdn, detail) {
-	logger.warn(`[PROVIDER] porkbun ${fqdn}: ${detail}`);
-	return { ok: false, detail };
+function fail(fqdn, result) {
+	logger.warn(`[PROVIDER] porkbun ${fqdn}: ${result.detail}`);
+	return { ok: false, ...result };
 }

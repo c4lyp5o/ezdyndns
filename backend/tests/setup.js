@@ -10,3 +10,4 @@ process.env.EZDYNDNS_DB = join(tmpdir(), `ezdyndns-test-${process.pid}-${Date.no
 process.env.EZDYNDNS_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString("base64");
 process.env.EZDYNDNS_TOKEN = "test-token";
 process.env.EZDYNDNS_NTFY_URL = "";
+process.env.EZDYNDNS_RESOLVE_CHECKS = "0";

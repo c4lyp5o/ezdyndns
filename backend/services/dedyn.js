@@ -30,6 +30,9 @@ export async function verifyDedynToken(token, { hostname, domainname, signal } =
 			: null;
 	const u = new URL("https://update.dedyn.io/ezdyndns");
 	if (fqdn) u.searchParams.set("hostname", fqdn);
+	// Without an IPv6 parameter deSEC deletes the AAAA unless the request came
+	// over IPv6 (update-api docs), so the probe keeps whatever is there.
+	u.searchParams.set("myipv6", "preserve");
 	let res;
 	try {
 		res = await fetch(u, { headers: { Authorization: `Token ${token}` }, signal });
@@ -56,11 +59,19 @@ export async function updateDedyn(service, domain, ip, { signal } = {}) {
 
 	const u = new URL("https://update.dedyn.io/ezdyndns");
 	u.searchParams.set("hostname", hostname);
-	if (ip?.includes(".")) u.searchParams.set("ip", ip);
-	if (process.env.EZDYNDNS_DEDYN_IP6) u.searchParams.set("ip6", process.env.EZDYNDNS_DEDYN_IP6);
+	// deSEC treats a missing address family as "delete that record" (unless the
+	// request itself came over it), so the family this record doesn't own is
+	// always sent as `preserve`. EZDYNDNS_DEDYN_IP6 (a fixed IPv6) still wins.
+	if (domain.record_type === "AAAA") {
+		u.searchParams.set("myipv4", "preserve");
+		u.searchParams.set("myipv6", ip);
+	} else {
+		u.searchParams.set("myipv4", ip);
+		u.searchParams.set("myipv6", process.env.EZDYNDNS_DEDYN_IP6 || "preserve");
+	}
 
 	const fqdn = hostname;
-	const probe = (status) =>
+	const probe = () =>
 		fetch(`https://desec.io/api/v1/domains/${fqdn}/`, {
 			headers: { Authorization: `Token ${token}` },
 			signal: AbortSignal.timeout(5000),
@@ -84,11 +95,15 @@ export async function updateDedyn(service, domain, ip, { signal } = {}) {
 	else parts.push(`HTTP ${res.status}: ${body.slice(0, 80)}`);
 	if (res.status === 429) parts.push("rate-limited: deSEC allows 2 updates/2min; next cycle will retry");
 	else {
-		const domainStatus = await probe(res.status);
+		const domainStatus = await probe();
 		if (domainStatus === 404) parts.push(`domain ${fqdn} not owned by this token`);
 		else if (domainStatus !== 200) parts.push(`domain read-back HTTP ${domainStatus}`);
 	}
 	const detail = parts.join(" | ");
 	logger.warn(`[PROVIDER] dedyn ${hostname}: ${detail}`);
-	return { ok: false, detail };
+	if (res.status === 429) {
+		const wait = Number(res.headers.get("retry-after"));
+		return { ok: false, detail, retryAfter: Number.isFinite(wait) && wait > 0 ? wait : 120 };
+	}
+	return { ok: false, detail, hard: res.status === 401 || res.status === 403 || res.status === 404 };
 }
