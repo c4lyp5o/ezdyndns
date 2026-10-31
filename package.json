@@ -2,7 +2,7 @@
   "name": "ezdyndns",
   "private": true,
   "type": "module",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "scripts": {
     "install:backend": "cd backend && bun install",
     "install:frontend": "cd frontend && bun install",

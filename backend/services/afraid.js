@@ -50,13 +50,15 @@ export async function updateAfraid(service, domain, ip, { signal } = {}) {
 		// The reply names the host it changed; a token copied from another record
 		// would silently move that record instead.
 		if (!body.toLowerCase().includes(fqdn.toLowerCase()))
-			return fail(fqdn, `token belongs to another record: ${line}`);
+			return fail(fqdn, { detail: `token belongs to another record: ${line}`, hard: true });
 		return { ok: true, detail: line };
 	}
-	return fail(fqdn, line || `HTTP ${res.status}`);
+	// "ERROR: Unable to locate this record" and friends need a new token.
+	if (res.ok && /^ERROR/i.test(line)) return fail(fqdn, { detail: line, hard: true });
+	return fail(fqdn, { detail: line || `HTTP ${res.status}`, retryAfter: res.status >= 500 ? 900 : undefined });
 }
 
-function fail(fqdn, detail) {
-	logger.warn(`[PROVIDER] afraid ${fqdn}: ${detail}`);
-	return { ok: false, detail };
+function fail(fqdn, result) {
+	logger.warn(`[PROVIDER] afraid ${fqdn}: ${result.detail}`);
+	return { ok: false, ...result };
 }

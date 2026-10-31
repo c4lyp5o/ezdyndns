@@ -43,6 +43,8 @@ document.body.addEventListener("htmx:after:request", (e) => {
 	const method = (ctx.request?.method ?? "GET").toUpperCase();
 	if (method === "GET") return;
 	if (src?.closest?.("[data-close-on-success]") && dialog.open) dialog.close();
+	// Push/Retry swaps in a table carrying the provider's reply; a refresh now would wipe it.
+	if (src?.closest?.("[data-no-refresh]")) return;
 	htmx.trigger(document.body, "ezdyndns:refresh");
 });
 
@@ -110,6 +112,18 @@ function syncProviderForm(form) {
 		field.querySelector("input").disabled = !spec;
 		if (spec) field.querySelector("[data-cred-label]").textContent = spec.label;
 	}
+	for (const field of form.querySelectorAll("[data-setting]")) {
+		const on = cfg.settings.some((f) => f.name === field.dataset.setting);
+		field.hidden = !on;
+		field.querySelector("input").disabled = !on;
+	}
+	// Not every provider can update AAAA records.
+	const type = form.querySelector("[data-record-type]");
+	const aaaa = type?.querySelector("option[value=AAAA]");
+	if (aaaa) {
+		aaaa.disabled = !cfg.ipv6;
+		if (!cfg.ipv6) type.value = "A";
+	}
 	form.querySelector("[data-cred-hint]").textContent = cfg.hint;
 	// Duck DNS serves one zone: fill it in, and clear it again on switching away.
 	const domain = form.querySelector("[data-domain]");
@@ -133,4 +147,52 @@ document.body.addEventListener("click", (e) => {
 	select.value = btn.dataset.logDomain;
 	select.dispatchEvent(new Event("change", { bubbles: true }));
 	document.getElementById("log").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+});
+
+// ---------- push log: CSV export ----------
+// A plain link can't carry the token header, so fetch the file and save the blob.
+document.getElementById("log-export").addEventListener("click", async (e) => {
+	const btn = e.currentTarget;
+	const params = new URLSearchParams(new FormData(document.getElementById("log-filter")));
+	params.delete("limit");
+	btn.disabled = true;
+	try {
+		const res = await fetch(`/api/updates.csv?${params}`, { headers: { "x-api-token": getToken() } });
+		if (res.status === 401) return lock();
+		if (!res.ok) throw new Error(`HTTP ${res.status}`);
+		const url = URL.createObjectURL(await res.blob());
+		const a = Object.assign(document.createElement("a"), { href: url, download: "ezdyndns-pushes.csv" });
+		a.click();
+		setTimeout(() => URL.revokeObjectURL(url), 1000);
+	} catch (err) {
+		btn.title = `Export failed: ${err.message}`;
+	} finally {
+		btn.disabled = false;
+	}
+});
+
+// ---------- toolbox ----------
+function showTool(name) {
+	for (const form of document.querySelectorAll("[data-tool]")) form.hidden = form.dataset.tool !== name;
+	const tab = document.querySelector(`[data-tool-tab][value="${name}"]`);
+	if (tab) tab.checked = true;
+}
+document.body.addEventListener("change", (e) => {
+	if (e.target.matches("[data-tool-tab]")) showTool(e.target.value);
+});
+// A typed name is a new question: drop the expected IP a record link filled in.
+document.querySelector("#tool-lookup [name=name]").addEventListener("input", () => {
+	document.querySelector("#tool-lookup [name=expected]").value = "";
+});
+// A record's DNS pill opens the lookup for that record, compared with what was pushed.
+document.body.addEventListener("click", (e) => {
+	const btn = e.target.closest("[data-tool-lookup]");
+	if (!btn) return;
+	showTool("lookup");
+	const form = document.getElementById("tool-lookup");
+	form.elements.name.value = btn.dataset.toolLookup;
+	form.elements.type.value = btn.dataset.toolType || "A";
+	form.elements.expected.value = btn.dataset.toolExpected || "";
+	form.requestSubmit();
+	document.getElementById("toolbox").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
 });

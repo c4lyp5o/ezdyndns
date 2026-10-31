@@ -9,7 +9,12 @@ const TTL = 300;
 
 const auth = (token) => ({ Authorization: `Bearer ${token}`, "Content-Type": "application/json" });
 const rrset = (d) =>
-	`/domains/${encodeURIComponent(d.domainname)}/records/${encodeURIComponent(d.hostname || "@")}/A`;
+	`/domains/${encodeURIComponent(d.domainname)}/records/${encodeURIComponent(d.hostname || "@")}/${d.record_type === "AAAA" ? "AAAA" : "A"}`;
+const failure = (r) => ({
+	detail: why(r),
+	...(r.res.status === 429 ? { retryAfter: Number(r.res.headers.get("retry-after")) || 60 } : {}),
+	...([401, 403].includes(r.res.status) ? { hard: true } : {}),
+});
 const fqdnOf = (d) => (d.hostname === "@" ? d.domainname : `${d.hostname}.${d.domainname}`);
 
 async function call(path, token, { method = "GET", body, signal } = {}) {
@@ -46,7 +51,7 @@ export async function updateGandi(service, domain, ip, { signal } = {}) {
 		const values = current.j.rrset_values ?? [];
 		if (values.length === 1 && values[0] === ip) return { ok: true, detail: "nochg" };
 	} else if (current.res.status !== 404) {
-		return fail(fqdn, why(current));
+		return fail(fqdn, failure(current));
 	}
 
 	const write = await call(rrset(domain), token, {
@@ -54,11 +59,11 @@ export async function updateGandi(service, domain, ip, { signal } = {}) {
 		body: { rrset_values: [ip], rrset_ttl: TTL },
 		signal,
 	});
-	if (!write.res.ok) return fail(fqdn, why(write));
-	return { ok: true, detail: `${current.res.ok ? "updated" : "created"} A ${fqdn} -> ${ip}` };
+	if (!write.res.ok) return fail(fqdn, failure(write));
+	return { ok: true, detail: `${current.res.ok ? "updated" : "created"} ${domain.record_type === "AAAA" ? "AAAA" : "A"} ${fqdn} -> ${ip}` };
 }
 
-function fail(fqdn, detail) {
-	logger.warn(`[PROVIDER] gandi ${fqdn}: ${detail}`);
-	return { ok: false, detail };
+function fail(fqdn, result) {
+	logger.warn(`[PROVIDER] gandi ${fqdn}: ${result.detail}`);
+	return { ok: false, ...result };
 }

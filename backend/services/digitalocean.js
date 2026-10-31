@@ -16,6 +16,12 @@ async function call(path, token, { method = "GET", body, signal } = {}) {
 	return { res, j };
 }
 
+const failure = (r) => ({
+	detail: why(r),
+	...(r.res.status === 429 ? { retryAfter: Number(r.res.headers.get("retry-after")) || 60 } : {}),
+	...([401, 403, 404].includes(r.res.status) ? { hard: true } : {}),
+});
+
 const why = ({ res, j }) => {
 	if (res.status === 401) return "token rejected (DigitalOcean 401)";
 	if (res.status === 403) return "token lacks domain scopes (DigitalOcean 403)";
@@ -43,24 +49,25 @@ export async function updateDigitalOcean(service, domain, ip, { signal } = {}) {
 	if (!token) return { ok: false, detail: "missing DigitalOcean token" };
 	const zone = encodeURIComponent(domain.domainname);
 	const fqdn = fqdnOf(domain);
+	const type = domain.record_type === "AAAA" ? "AAAA" : "A";
 
-	const list = await call(`/domains/${zone}/records?type=A&name=${encodeURIComponent(fqdn)}`, token, { signal });
-	if (!list.res.ok) return fail(fqdn, why(list));
+	const list = await call(`/domains/${zone}/records?type=${type}&name=${encodeURIComponent(fqdn)}`, token, { signal });
+	if (!list.res.ok) return fail(fqdn, failure(list));
 	const record = list.j.domain_records?.[0];
 	if (record?.data === ip) return { ok: true, detail: "nochg" };
 
 	const write = record
-		? await call(`/domains/${zone}/records/${record.id}`, token, { method: "PATCH", body: { type: "A", data: ip }, signal })
+		? await call(`/domains/${zone}/records/${record.id}`, token, { method: "PATCH", body: { type, data: ip }, signal })
 		: await call(`/domains/${zone}/records`, token, {
 				method: "POST",
-				body: { type: "A", name: domain.hostname || "@", data: ip, ttl: TTL },
+				body: { type, name: domain.hostname || "@", data: ip, ttl: TTL },
 				signal,
 			});
-	if (!write.res.ok) return fail(fqdn, why(write));
-	return { ok: true, detail: `${record ? "updated" : "created"} A ${fqdn} -> ${ip}` };
+	if (!write.res.ok) return fail(fqdn, failure(write));
+	return { ok: true, detail: `${record ? "updated" : "created"} ${type} ${fqdn} -> ${ip}` };
 }
 
-function fail(fqdn, detail) {
-	logger.warn(`[PROVIDER] digitalocean ${fqdn}: ${detail}`);
-	return { ok: false, detail };
+function fail(fqdn, result) {
+	logger.warn(`[PROVIDER] digitalocean ${fqdn}: ${result.detail}`);
+	return { ok: false, ...result };
 }

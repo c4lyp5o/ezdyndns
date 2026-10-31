@@ -152,6 +152,8 @@ function createScene(THREE, stage) {
 		current: color("--positive"),
 		pending: color("--warning"),
 		failing: color("--negative"),
+		held: color("--negative"),
+		waiting: color("--warning"),
 		paused: color("--muted"),
 		new: color("--muted"),
 		link: new THREE.Color("#4a4c52"),
@@ -224,9 +226,9 @@ function createScene(THREE, stage) {
 				const mesh = new THREE.Mesh(nodeGeo, new THREE.MeshBasicMaterial({ color: palette[r.state] ?? palette.paused }));
 				mesh.position.copy(pos);
 				const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), pos]);
-				const dashed = r.state !== "current" && r.state !== "pending";
+				const dashed = !["current", "pending", "waiting"].includes(r.state);
 				const mat = dashed
-					? new THREE.LineDashedMaterial({ color: r.state === "failing" ? palette.failing : palette.link, dashSize: 0.12, gapSize: 0.1 })
+					? new THREE.LineDashedMaterial({ color: r.state === "failing" || r.state === "held" ? palette.failing : palette.link, dashSize: 0.12, gapSize: 0.1 })
 					: new THREE.LineBasicMaterial({ color: palette.link });
 				const line = new THREE.Line(geo, mat);
 				if (dashed) line.computeLineDistances();
@@ -245,7 +247,7 @@ function createScene(THREE, stage) {
 			const t0 = performance.now();
 			packets = nodes
 				.filter((n) => n.state !== "paused" && n.state !== "new")
-				.map((n, i) => ({ node: n, t0: t0 + i * 90, fails: n.state === "failing" }));
+				.map((n, i) => ({ node: n, t0: t0 + i * 90, fails: n.state === "failing" || n.state === "held" }));
 		}
 		lastCheck = data.check;
 		wake();
@@ -346,7 +348,8 @@ function createScene(THREE, stage) {
 }
 
 const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
-const stateWord = (s) => ({ current: "current", pending: "behind", failing: "failing", paused: "paused", new: "waiting" })[s] ?? s;
+const stateWord = (s) =>
+	({ current: "current", pending: "behind", failing: "failing", held: "needs attention", waiting: "backing off", paused: "paused", new: "waiting" })[s] ?? s;
 
 // Panels that loaded before this module ran (htmx fires on load) are caught up here.
 for (const id of ["hero", "topology", "updates"]) {

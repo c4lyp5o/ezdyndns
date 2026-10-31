@@ -15,11 +15,11 @@ export function duckSubname({ hostname, domainname }) {
 	return null;
 }
 
-async function call(token, subname, ip, signal) {
+async function call(token, subname, ip, signal, type = "A") {
 	const u = new URL("https://www.duckdns.org/update");
 	u.searchParams.set("domains", subname);
 	u.searchParams.set("token", token);
-	if (ip) u.searchParams.set("ip", ip);
+	if (ip) u.searchParams.set(type === "AAAA" ? "ipv6" : "ip", ip);
 	u.searchParams.set("verbose", "true");
 	const res = await fetch(u, { signal, headers: { "User-Agent": "ezdyndns" } });
 	const lines = (await res.text()).trim().split("\n");
@@ -48,12 +48,13 @@ export async function updateDuckdns(service, domain, ip, { signal } = {}) {
 	if (!token) return { ok: false, detail: "missing Duck DNS token" };
 	const sub = duckSubname(domain);
 	if (!sub) return { ok: false, detail: "not a <subname>.duckdns.org record" };
-	const { res, lines } = await call(token, sub, ip, signal);
+	const { res, lines } = await call(token, sub, ip, signal, domain.record_type);
 	if (res.ok && lines[0] === "OK") {
 		// verbose body: OK / ipv4 / ipv6 / UPDATED|NOCHANGE
 		return { ok: true, detail: lines[3] === "NOCHANGE" ? "nochg" : `updated ${sub}.duckdns.org` };
 	}
 	const detail = res.ok ? notOurs(sub) : `HTTP ${res.status}`;
 	logger.warn(`[PROVIDER] duckdns ${sub}: ${detail}`);
-	return { ok: false, detail };
+	// KO is a wrong token or a subname not on the account: retrying won't help.
+	return res.ok ? { ok: false, detail, hard: true } : { ok: false, detail, retryAfter: 600 };
 }

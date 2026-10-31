@@ -35,7 +35,18 @@ const svc = (provider, creds) => ({
 
 describe("catalog", () => {
 	it("lists every provider with an adapter and at least one credential field", () => {
-		expect(PROVIDERS).toEqual(["namecheap", "cloudflare", "dedyn", "duckdns", "porkbun", "digitalocean", "gandi", "afraid"]);
+		expect(PROVIDERS).toEqual([
+			"namecheap",
+			"cloudflare",
+			"dedyn",
+			"duckdns",
+			"porkbun",
+			"digitalocean",
+			"gandi",
+			"afraid",
+			"noip",
+			"dyndns2",
+		]);
 		for (const id of PROVIDERS) expect(CATALOG[id].fields.length).toBeGreaterThan(0);
 	});
 });

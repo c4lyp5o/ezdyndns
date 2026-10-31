@@ -15,17 +15,20 @@ import {
 	sanitizeService,
 	domainHealth,
 	recentIpChanges,
+	getDomain,
+	updateDomain,
+	serviceOptions,
 } from "../db";
-import { restartScheduler, checkOnce } from "../scheduler";
+import { isIP } from "node:net";
+import { restartScheduler, checkOnce, pushDomainNow, pushServiceSoon } from "../scheduler";
 import { CATALOG, PROVIDERS, verifyProvider, verifyCredentialChange } from "../services/providers";
 import { formCatalog } from "../services/catalog";
-import { validateRecord, validateServiceEdit } from "./api";
+import { cleanName, lookup, mailReport, reverseReport } from "../services/dnstools";
+import { mergedSettings, pushDomainSoon, settingsFrom, toolQuery, validateRecord, validateServiceEdit } from "./api";
 import config from "../config";
+import { esc } from "./html";
+import { lookupResult, mailResult, reverseResult, toolError } from "./toolbox";
 
-const esc = (s) =>
-	String(s ?? "").replace(/[&<>"']/g, (c) => ({
-		"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
-	})[c]);
 
 // SQLite datetime('now') is UTC without a zone ("2026-10-31 13:04:12").
 const isoUtc = (sqlTs) => (sqlTs ? `${sqlTs.replace(" ", "T")}Z` : null);
@@ -50,12 +53,42 @@ const PROVIDER_LABEL = Object.fromEntries(Object.entries(CATALOG).map(([id, p]) 
 const INTERVALS = [60, 120, 300, 600, 900, 1800];
 
 // What a record's last pushes say about it right now.
-function recordState(d, ip) {
+function recordState(d, ip, ip6 = getState("last_ip6")?.value) {
 	if (d.service_status !== "active") return { key: "paused", label: "Paused" };
+	if (d.held && d.hold_kind === "hard") return { key: "held", label: "Needs attention" };
 	if (!d.last) return { key: "new", label: "Waiting" };
+	if (d.held) return { key: "waiting", label: "Backing off" };
 	if (d.last.ok !== 1) return { key: "failing", label: "Failing" };
-	if (ip && d.last.new_ip !== ip) return { key: "pending", label: "Behind" };
+	const want = d.record_type === "AAAA" ? ip6 : ip;
+	if (want && d.last.new_ip !== want) return { key: "pending", label: "Behind" };
 	return { key: "current", label: "Current" };
+}
+
+// The record's name, with its type when it isn't a plain A record.
+const recordName = (d) =>
+	`<span class="rec-name"><span class="mono">${esc(fqdnOf(d))}</span>${d.record_type === "AAAA" ? ` <span class="type-tag">AAAA</span>` : ""}</span>`;
+
+const DNS_VERDICT = {
+	resolves: { cls: "current", label: "Resolves" },
+	propagating: { cls: "pending", label: "Propagating" },
+	mismatch: { cls: "failing", label: "Mismatch" },
+	unknown: { cls: "neutral", label: "Unknown" },
+};
+
+// What the resolvers last said about a record, as a pill with the answers in its title.
+function dnsCell(d) {
+	if (!d.dns_verdict) return `<span class="dash" title="Not checked yet">—</span>`;
+	const v = DNS_VERDICT[d.dns_verdict] ?? DNS_VERDICT.unknown;
+	let answers = [];
+	try {
+		answers = JSON.parse(d.dns_results ?? "[]");
+	} catch {}
+	const title = [
+		`Expected ${d.dns_expected ?? "—"}`,
+		...answers.map((r) => `${r.kind === "authoritative" ? "auth " : ""}${r.server}: ${r.error ?? (r.values.join(", ") || r.empty || "none")}`),
+		`Checked ${d.dns_checked_at} UTC`,
+	].join("\n");
+	return `<button type="button" class="pill pill-${v.cls} pill-btn" title="${esc(title)}" data-tool-lookup="${esc(fqdnOf(d))}" data-tool-type="${esc(d.record_type ?? "A")}" data-tool-expected="${esc(d.dns_expected ?? "")}">${esc(v.label)}</button>`;
 }
 
 const pill = (state) => `<span class="pill pill-${state.key}">${esc(state.label)}</span>`;
@@ -76,13 +109,14 @@ function summaryPartial() {
 		return `No services yet. Add one and ezdyndns will start pushing ${ip ? `<span class="mono">${esc(ip)}</span>` : "your public IP"} to it.`;
 	if (records.length === 0) return "Your services have no records yet. Edit a service to add one.";
 	const states = records.map((d) => ({ d, s: recordState(d, ip) }));
-	const failing = states.filter((x) => x.s.key === "failing");
+	const failing = states.filter((x) => x.s.key === "failing" || x.s.key === "held");
 	const behind = states.filter((x) => x.s.key === "pending");
 	const current = states.filter((x) => x.s.key === "current");
 	if (failing.length) {
 		const first = failing[0].d;
 		const more = failing.length > 1 ? ` and ${failing.length - 1} more` : "";
-		return `<span class="sig sig-failing" aria-hidden="true"></span>${failing.length} of ${records.length} records failing: <span class="mono">${esc(fqdnOf(first))}</span>${more}. ${esc(firstReason(first.last?.detail))}`;
+		const held = failing.filter((x) => x.s.key === "held").length;
+		return `<span class="sig sig-failing" aria-hidden="true"></span>${failing.length} of ${records.length} records failing${held ? ` (${held} paused until you fix ${held === 1 ? "it" : "them"})` : ""}: <span class="mono">${esc(fqdnOf(first))}</span>${more}. ${esc(firstReason(first.hold_reason ?? first.last?.detail))}`;
 	}
 	if (behind.length)
 		return `${behind.length} of ${records.length} records still on an older IP. The next push sends <span class="mono">${esc(ip)}</span>.`;
@@ -125,7 +159,9 @@ function heroPartial() {
 </div>
 <div class="ip-block">
 	<div class="ip-value mono" data-ip="${esc(ip ?? "")}">${esc(ip ?? "—")}</div>
-	<p class="ip-meta">${source ? `Seen by ${esc(source)}` : "Not checked yet"}${held ? ` · held for ${esc(held)}` : ""}</p>
+	<p class="ip-meta">${source ? `Agreed by ${esc(source.replaceAll("+", ", "))}` : "Not checked yet"}${held ? ` · held for ${esc(held)}` : ""}</p>
+	${getState("last_ip6")?.value ? `<p class="ip-meta">IPv6 <span class="mono">${esc(getState("last_ip6").value)}</span></p>` : ""}
+	${getState("last_check_error")?.value ? `<p class="row-note">Last check pushed nothing: ${esc(getState("last_check_error").value)}</p>` : ""}
 </div>
 <h3 class="sub-title">Address history</h3>
 ${
@@ -172,7 +208,7 @@ function topologyPartial() {
 }
 
 // ---------- records ----------
-function domainsPartial() {
+function domainsPartial(flash = null) {
 	const ip = getState("last_ip")?.value;
 	const records = domainHealth(24);
 	if (records.length === 0)
@@ -180,30 +216,39 @@ function domainsPartial() {
 	const rows = records
 		.map((d) => {
 			const s = recordState(d, ip);
+			const TICK = { 0: ["fail", "failed"], 1: ["ok", "ok"], 2: ["skip", "skipped"] };
 			const ticks = Array.from({ length: 24 }, (_, i) => d.recent[23 - i])
 				.map((u) =>
 					u
-						? `<i class="${u.ok === 1 ? "ok" : "fail"}" title="${esc(`${u.created_at} UTC · ${u.ok === 1 ? "ok" : "failed"}`)}"></i>`
+						? `<i class="${TICK[u.ok][0]}" title="${esc(`${u.created_at} UTC · ${TICK[u.ok][1]}${u.ok === 2 ? ` · ${u.detail ?? ""}` : ""}`)}"></i>`
 						: `<i class="none"></i>`,
 				)
 				.join("");
 			const okCount = d.recent.filter((u) => u.ok === 1).length;
-			const failNote =
-				s.key === "failing"
-					? `<div class="row-note">${esc(firstReason(d.last?.detail))} ${d.fail_streak > 1 ? `${d.fail_streak} in a row.` : ""}</div>`
+			let note = "";
+			if (s.key === "held")
+				note = `<div class="row-note">${esc(firstReason(d.hold_reason))} Fix it, then press Retry.</div>`;
+			else if (s.key === "waiting")
+				note = `<div class="row-note">${esc(firstReason(d.hold_reason))} Next try after ${timeEl(isoUtc(d.hold_until), "time")}.</div>`;
+			else if (s.key === "failing")
+				note = `<div class="row-note">${esc(firstReason(d.last?.detail))} ${d.fail_streak > 1 ? `${d.fail_streak} in a row.` : ""}</div>`;
+			const reply =
+				flash && flash.id === d.id
+					? `<div class="row-reply ${flash.ok ? "ok" : "bad"}" role="status">Pushed just now: <span class="mono">${esc(flash.detail ?? "")}</span></div>`
 					: "";
+			const pushLabel = d.held ? "Retry" : "Push";
 			return `<tr class="state-${s.key}">
-	<td class="ident"><span class="mono">${esc(fqdnOf(d))}</span><span class="row-sub">${esc(d.service_name)} · ${esc(PROVIDER_LABEL[d.provider] ?? d.provider)}</span>${failNote}</td>
+	<td class="ident">${recordName(d)}<span class="row-sub">${esc(d.service_name)} · ${esc(PROVIDER_LABEL[d.provider] ?? d.provider)} · last good ${relEl(isoUtc(d.last_ok?.created_at))}</span>${note}${reply}</td>
 	<td>${pill(s)}</td>
 	<td class="mono">${d.last?.new_ip ? esc(d.last.new_ip) : `<span class="dash">—</span>`}</td>
-	<td>${relEl(isoUtc(d.last_ok?.created_at))}</td>
-	<td><span class="ticks" role="img" aria-label="${okCount} of ${d.recent.length} recent pushes succeeded">${ticks}</span></td>
-	<td class="act"><button type="button" class="text-btn" data-log-domain="${d.id}">Log</button></td>
+	<td>${dnsCell(d)}</td>
+	<td><span class="ticks" role="img" aria-label="${okCount} of ${d.recent.filter((u) => u.ok !== 2).length} recent pushes succeeded">${ticks}</span></td>
+	<td class="act">${d.service_status === "active" ? `<button type="button" class="text-btn" hx-post="/partials/domains/${d.id}/push" hx-target="#domains" hx-disable="this" data-no-refresh title="Push this record now and show the provider's reply">${pushLabel}</button>` : ""}<button type="button" class="text-btn" data-log-domain="${d.id}">Log</button></td>
 </tr>`;
 		})
 		.join("");
 	return `<table class="data records">
-<thead><tr><th>Record</th><th>State</th><th>Points at</th><th>Last good push</th><th>Last 24 pushes</th><th><span class="sr">Actions</span></th></tr></thead>
+<thead><tr><th>Record</th><th>State</th><th>Points at</th><th title="What the zone's nameservers and public resolvers answer">DNS</th><th>Last 24 cycles</th><th><span class="sr">Actions</span></th></tr></thead>
 <tbody>${rows}</tbody></table>`;
 }
 
@@ -232,7 +277,7 @@ function servicesPartial() {
 
 // ---------- push log ----------
 function updatesPartial(query = {}) {
-	const filter = { domainId: query.domain_id || null, failedOnly: query.result === "failed" };
+	const filter = { domainId: query.domain_id || null, failedOnly: query.result === "failed", sentOnly: query.result === "sent" };
 	const rows = recentUpdates(Math.min(Math.max(Number(query.limit) || 50, 1), 200), filter);
 	const total = countUpdates(filter);
 	const count = `<p class="log-count">${total === 0 ? "No pushes" : `Showing ${rows.length.toLocaleString("en")} of ${total.toLocaleString("en")} ${total === 1 ? "push" : "pushes"}`}</p>`;
@@ -243,11 +288,11 @@ function updatesPartial(query = {}) {
 <tbody>${rows
 		.map(
 			(u) => `
-<tr data-id="${u.id}" class="${u.ok === 1 ? "" : "is-fail"}">
+<tr data-id="${u.id}" class="${u.ok === 0 ? "is-fail" : u.ok === 2 ? "is-skip" : ""}">
 	<td>${timeEl(isoUtc(u.created_at))}</td>
 	<td class="mono">${esc(u.hostname === "@" ? u.domainname : `${u.hostname}.${u.domainname}`)}</td>
 	<td class="mono">${esc(u.new_ip)}${u.old_ip && u.old_ip !== u.new_ip ? ` <span class="faint">from ${esc(u.old_ip)}</span>` : ""}</td>
-	<td>${u.ok === 1 ? `<span class="pill pill-current">ok</span>` : `<span class="pill pill-failing">failed</span>`}</td>
+	<td>${u.ok === 1 ? `<span class="pill pill-current">ok</span>` : u.ok === 2 ? `<span class="pill pill-neutral">skipped</span>` : `<span class="pill pill-failing">failed</span>`}</td>
 	<td class="detail">${esc(u.detail ?? "")}</td>
 </tr>`,
 		)
@@ -257,6 +302,23 @@ function updatesPartial(query = {}) {
 // ---------- dialogs ----------
 const intervalOptions = (selected) =>
 	INTERVALS.map((s) => `<option value="${s}"${s === selected ? " selected" : ""}>${intervalLabel(s)}</option>`).join("");
+
+// Every provider setting as a hidden field; app.js shows the chosen provider's.
+const settingFields = () => {
+	const seen = new Map();
+	for (const p of Object.values(CATALOG)) for (const f of p.settings ?? []) seen.set(f.name, f);
+	return [...seen.values()]
+		.map(
+			(f) =>
+				`<label class="field" data-setting="${f.name}" hidden><span>${esc(f.label)}</span><input name="${f.name}" placeholder="${esc(f.placeholder ?? "")}" autocomplete="off" disabled></label>`,
+		)
+		.join("");
+};
+
+const typeOptions = (ipv6, selected = "A") =>
+	["A", ...(ipv6 ? ["AAAA"] : [])]
+		.map((t) => `<option value="${t}"${t === selected ? " selected" : ""}>${t === "A" ? "A (IPv4)" : "AAAA (IPv6)"}</option>`)
+		.join("");
 
 function newServicePartial() {
 	const providerOpts = PROVIDERS.map((p) => `<option value="${p}">${esc(PROVIDER_LABEL[p] ?? p)}</option>`).join("");
@@ -268,13 +330,15 @@ function newServicePartial() {
 		<label class="field"><span>Name</span><input name="name" required placeholder="home-namecheap" autocomplete="off"></label>
 		<label class="field" data-cred="username"><span data-cred-label>API token</span><input name="username" type="password" autocomplete="off"></label>
 		<label class="field" data-cred="password"><span data-cred-label>Dynamic DNS password</span><input name="password" type="password" autocomplete="off"></label>
+		${settingFields()}
 		<label class="field"><span>Check every</span><select name="interval_sec">${intervalOptions(300)}</select></label>
 	</div>
 	<p class="hint" data-cred-hint></p>
 	<h3 class="sub-title">First record</h3>
-	<div class="field-grid">
+	<div class="field-grid field-grid-3">
 		<label class="field"><span>Host</span><input name="hostname" placeholder="home or @" autocomplete="off"></label>
 		<label class="field"><span>Domain</span><input name="domainname" placeholder="domain.tld" autocomplete="off" data-domain></label>
+		<label class="field"><span>Type</span><select name="record_type" data-record-type>${typeOptions(true)}</select></label>
 	</div>
 	<p class="form-result" data-result role="status" aria-live="polite"></p>
 	<footer class="sheet-foot"><button type="button" class="ghost" data-close>Cancel</button><button type="submit" class="primary">Verify and add</button></footer>
@@ -292,13 +356,35 @@ function editServicePartial(id) {
 				`<label class="field"><span>${esc(f.edit)}</span><input name="${f.name}" type="password" autocomplete="off" placeholder="Leave blank to keep the current one"></label>`,
 		)
 		.join("");
+	const options = serviceOptions(s);
+	const settings = (meta.settings ?? [])
+		.map(
+			(f) =>
+				`<label class="field"><span>${esc(f.label)}</span><input name="${f.name}" value="${esc(options[f.name] ?? "")}" placeholder="${esc(f.placeholder ?? "")}" autocomplete="off"></label>`,
+		)
+		.join("");
 	const perRecord = meta.perRecord
 		? `<label class="field"><span>${esc(meta.perRecord.label)}</span><input name="password" type="password" autocomplete="off" ${meta.perRecord.required && records.length > 0 ? "required" : `placeholder="Optional"`}></label>`
 		: "";
 	const recordRows = records
 		.map(
-			(d) => `<li><span class="mono">${esc(fqdnOf(d))}</span>
-	<button type="button" class="text-btn danger" hx-delete="/partials/services/${id}/domains/${d.id}" hx-target="#dialog-body" hx-confirm="Remove ${esc(fqdnOf(d))} from ${esc(s.name)}? ezdyndns stops updating it; the DNS record itself is left as it is.">Remove</button></li>`,
+			(d) => `<li>
+	<div class="rec-line">${recordName(d)}
+		<span class="rec-actions">
+			<details class="rec-edit"><summary class="text-btn">Edit</summary>
+				<form class="add-record" hx-patch="/partials/services/${id}/domains/${d.id}" hx-target="#dialog-body">
+					<label class="field"><span>Host</span><input name="hostname" required value="${esc(d.hostname)}" autocomplete="off"></label>
+					<label class="field"><span>Domain</span><input name="domainname" required value="${esc(d.domainname)}" autocomplete="off"></label>
+					${meta.ipv6 ? `<label class="field"><span>Type</span><select name="record_type">${typeOptions(true, d.record_type)}</select></label>` : ""}
+					${meta.perRecord ? `<label class="field"><span>${esc(meta.perRecord.label)}</span><input name="password" type="password" autocomplete="off" placeholder="Leave blank to keep"></label>` : ""}
+					<button type="submit" class="ghost">Save record</button>
+					<p class="form-result" data-result role="status" aria-live="polite"></p>
+				</form>
+			</details>
+			<button type="button" class="text-btn danger" hx-delete="/partials/services/${id}/domains/${d.id}" hx-target="#dialog-body" hx-confirm="Remove ${esc(fqdnOf(d))} from ${esc(s.name)}? ezdyndns stops updating it; the DNS record itself is left as it is.">Remove</button>
+		</span>
+	</div>
+</li>`,
 		)
 		.join("");
 	return `
@@ -309,6 +395,7 @@ function editServicePartial(id) {
 			<label class="field"><span>Name</span><input name="name" value="${esc(s.name)}" required autocomplete="off"></label>
 			<label class="field"><span>Check every</span><select name="interval_sec">${intervalOptions(s.interval_sec)}</select></label>
 			${credFields}
+			${settings}
 			<fieldset class="field"><legend>Updates</legend>
 				<div class="seg">
 					<label><input type="radio" name="status" value="active"${s.status === "active" ? " checked" : ""}><span>Active</span></label>
@@ -327,6 +414,7 @@ function editServicePartial(id) {
 		<form class="add-record" hx-post="/partials/services/${id}/domains" hx-target="#dialog-body">
 			<label class="field"><span>Host</span><input name="hostname" required placeholder="home or @" autocomplete="off"></label>
 			<label class="field"><span>Domain</span><input name="domainname" required ${meta.domain ? `value="${esc(meta.domain)}"` : `placeholder="domain.tld"`} autocomplete="off"></label>
+			${meta.ipv6 ? `<label class="field"><span>Type</span><select name="record_type">${typeOptions(true)}</select></label>` : ""}
 			${perRecord}
 			<button type="submit" class="ghost">Add record</button>
 			<p class="form-result" data-result role="status" aria-live="polite"></p>
@@ -356,14 +444,41 @@ export const partials = new Elysia({ prefix: "/partials" })
 			return "unauthorized";
 		}
 	})
+	// A check that can't agree on the IP still answers with the hero, which shows why.
 	.post("/check", async () => {
-		await checkOnce();
+		await checkOnce().catch(() => {});
 		return heroPartial();
 	})
 	.get("/summary", () => summaryPartial())
 	.get("/hero", () => heroPartial())
 	.get("/topology", () => topologyPartial())
 	.get("/domains", () => domainsPartial())
+	// Push or Retry one record; the table comes back with the provider's reply under it.
+	.post("/domains/:id/push", async ({ params }) => {
+		const id = Number(params.id);
+		if (!getDomain(id)) return domainsPartial();
+		const res = await pushDomainNow(id).catch((err) => ({ ok: false, detail: err.message }));
+		return domainsPartial({ id, ok: res.ok, detail: res.detail });
+	})
+	// Toolbox. Errors answer 200 with a message so htmx shows them in place.
+	.get("/tools/lookup", async ({ query }) => {
+		const input = toolQuery(query);
+		if (input.error) return toolError(input.error);
+		const expected = isIP(String(query.expected ?? "")) ? query.expected : null;
+		return lookupResult(await lookup(input.name, input.type), { expected });
+	})
+	.get("/tools/mail", async ({ query }) => {
+		const domain = cleanName(query.domain);
+		if (!domain) return toolError("Enter a domain name, for example example.com.");
+		const selector = String(query.selector ?? "").trim();
+		if (selector && !cleanName(`${selector}.x`)) return toolError("That DKIM selector isn't a valid DNS label.");
+		return mailResult(await mailReport(domain, selector || null));
+	})
+	.get("/tools/reverse", async ({ query }) => {
+		const ip = String(query.ip ?? "").trim();
+		if (!isIP(ip)) return toolError("Enter an IPv4 or IPv6 address.");
+		return reverseResult(await reverseReport(ip));
+	})
 	.get("/services", () => servicesPartial())
 	.get("/updates", ({ query }) => updatesPartial(query))
 	.get("/services/new", () => newServicePartial())
@@ -373,10 +488,19 @@ export const partials = new Elysia({ prefix: "/partials" })
 	.post("/services", async ({ body, set }) => {
 		// Same credential gate as POST /api/services — a bad deSEC/CF token is
 		// rejected before it can sit failing silently in the update log.
+		const options = settingsFrom(body.provider, body);
+		if (body.hostname || body.domainname) {
+			const problem = validateRecord({ provider: body.provider }, body, 0);
+			if (problem) {
+				set.status = 400;
+				return { message: problem };
+			}
+		}
 		const check = await verifyProvider({
 			provider: body.provider,
 			username: body.username,
 			password: body.password,
+			options,
 			hostname: body.hostname,
 			domainname: body.domainname,
 		});
@@ -384,14 +508,16 @@ export const partials = new Elysia({ prefix: "/partials" })
 			set.status = 422;
 			return { message: `Credential check failed: ${check.detail}` };
 		}
+		let id;
 		try {
-			const id = createService(body);
+			id = createService({ ...body, options });
 			if (body.hostname && body.domainname)
-				addDomain(id, { hostname: body.hostname, domainname: body.domainname });
+				addDomain(id, { hostname: body.hostname, domainname: body.domainname, record_type: body.record_type });
 		} catch (err) {
 			return conflict(set, err);
 		}
 		restartScheduler();
+		pushServiceSoon(id);
 		set.status = 204;
 	})
 	.patch("/services/:id", async ({ params, body, set }) => {
@@ -412,11 +538,12 @@ export const partials = new Elysia({ prefix: "/partials" })
 			return { message: `Credential check failed: ${check.detail}` };
 		}
 		try {
-			updateService(id, body);
+			updateService(id, { ...body, options: mergedSettings(service, body) });
 		} catch (err) {
 			return conflict(set, err);
 		}
 		restartScheduler();
+		if (body.status === "active" && service.status !== "active") pushServiceSoon(id);
 		set.status = 204;
 	})
 	.delete("/services/:id", ({ params, set }) => {
@@ -432,6 +559,7 @@ export const partials = new Elysia({ prefix: "/partials" })
 	.post("/services/:id/resume", ({ params }) => {
 		setStatus(Number(params.id), "active");
 		restartScheduler();
+		pushServiceSoon(Number(params.id));
 		return servicesPartial();
 	})
 	.post("/services/:id/domains", ({ params, body, set }) => {
@@ -446,11 +574,31 @@ export const partials = new Elysia({ prefix: "/partials" })
 			return { message: problem };
 		}
 		try {
-			addDomain(id, body);
+			pushDomainSoon(addDomain(id, body));
 		} catch (err) {
 			return conflict(set, err);
 		}
 		return editServicePartial(id);
+	})
+	.patch("/services/:id/domains/:domainId", ({ params, body, set }) => {
+		const service = getService(Number(params.id));
+		const domain = getDomain(Number(params.domainId));
+		if (!service || !domain || domain.service_id !== service.id) {
+			set.status = 404;
+			return { message: "That record no longer exists." };
+		}
+		const problem = validateRecord(service, { ...body, password: body?.password || domain.password }, 0);
+		if (problem) {
+			set.status = 400;
+			return { message: problem };
+		}
+		try {
+			updateDomain(service.id, domain.id, body);
+		} catch (err) {
+			return conflict(set, err);
+		}
+		pushDomainSoon(domain.id);
+		return editServicePartial(service.id);
 	})
 	.delete("/services/:id/domains/:domainId", ({ params }) => {
 		deleteDomain(Number(params.id), Number(params.domainId));
