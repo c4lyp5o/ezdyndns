@@ -90,8 +90,9 @@ Never point a local run at the `db/` a running container uses: set `EZDYNDNS_DB`
 
 ## Releases
 1. Move the `[Unreleased]` notes in `CHANGELOG.md` under a new version heading and set the same
-   version in `package.json`.
-2. Merge `development` into `master` and tag it: `git tag v0.2.0 && git push origin v0.2.0`.
+   version in `package.json`. From 1.0.0 the version follows semver over the public surface: the
+   HTTP API under `/api`, the environment variables, and the database (migrations only move forward).
+2. Merge `development` into `master` and tag it: `git tag v1.0.0 && git push origin v1.0.0`.
 3. The **Release** workflow runs the tests, checks that the tag matches `package.json`, publishes
    `ghcr.io/c4lyp5o/ezdyndns:<version>` (plus `<major>.<minor>` and `latest`), and creates a GitHub
    release with that version's changelog section as its notes.
