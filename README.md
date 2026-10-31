@@ -1,5 +1,9 @@
 # 🌐 ezdyndns
 
+[![CI](https://github.com/c4lyp5o/ezdyndns/actions/workflows/ci.yml/badge.svg)](https://github.com/c4lyp5o/ezdyndns/actions/workflows/ci.yml)
+[![Test](https://github.com/c4lyp5o/ezdyndns/actions/workflows/test.yml/badge.svg)](https://github.com/c4lyp5o/ezdyndns/actions/workflows/test.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 Self-hosted dynamic DNS updater. Watches your public IP and pushes A-record
 updates to DNS providers when it changes. Rewrite of the 2024 `cdyndns`
 concept on the ez stack.
@@ -8,7 +12,12 @@ concept on the ez stack.
 - Bun + Elysia backend, `bun:sqlite` (no ORM, WAL mode)
 - In-process scheduler (`setInterval` + jitter) — no worker process; a DDNS
   check is one ~200ms HTTP call every N seconds, it never blocks the API
-- Single-file htmx frontend (no build step, served by the same process)
+- htmx 4 frontend with no build step, served by the same process: server-rendered
+  fragments (`backend/routes/partials.js`), `app.js` for htmx glue, and `ui.js` (ES module)
+  for Motion feedback and a lazily loaded three.js view of the IP → record links
+- Third-party files are vendored into `frontend/public/vendor/` by `scripts/vendor-frontend.sh`
+  (pinned versions; three/motion tree-shaken with `bun build`). The Traefik CSP is
+  `script-src 'self'; font-src 'self'`, so nothing loads from a CDN. JS is gzipped in-process.
 - deadslog logging, Biome lint
 
 ## Providers
@@ -42,6 +51,31 @@ that file for generation commands. The UI asks for the management token on
 first load and stores it in `sessionStorage.ezdyndns_token`; nothing renders
 or fetches until it's unlocked.
 
+## Development
+```bash
+bun run test                 # backend tests; a preload forces a temporary database
+bun run lint                 # Biome 2.2.3 (vendored files are excluded)
+bun run vendor               # re-download the pinned frontend libraries into frontend/public/vendor/
+```
+
+Branches: `master` holds released code, `development` collects finished work, and changes are made
+on `feat/*` or `fix/*` branches cut from `development`. Pull requests go into `development`;
+`development` is merged into `master` for a release.
+
+Never point a local run at the `db/` a running container uses: set `EZDYNDNS_DB` to a scratch path.
+
+## Releases
+1. Move the `[Unreleased]` notes in `CHANGELOG.md` under a new version heading and set the same
+   version in `package.json`.
+2. Merge `development` into `master` and tag it: `git tag v0.2.0 && git push origin v0.2.0`.
+3. The **Release** workflow runs the tests, checks that the tag matches `package.json`, publishes
+   `ghcr.io/c4lyp5o/ezdyndns:<version>` (plus `<major>.<minor>` and `latest`), and creates a GitHub
+   release with that version's changelog section as its notes.
+
+CI (`ci.yml`) lints, checks that every vendored file the page loads is committed, and builds and
+smoke-tests the Docker image on pushes and pull requests to `master` and `development`. The
+**Test** workflow (`test.yml`) runs `bun test` on Bun 1.3.8 (the image's version) and the latest Bun.
+
 ## Deploy (Docker)
 ```bash
 docker compose build
@@ -72,10 +106,14 @@ rebuilds — the container must run as a uid that can write those directories.
 
 ## API
 - `GET  /api/status` — current IP, last check, services (passwords masked)
-- `GET  /api/updates?limit=25` — update log
+- `GET  /api/updates?limit=25&domain_id=&failed=1` — update log, optionally one record / failures only
+- `GET  /api/domains` — per-record health: last 24 pushes, last success, consecutive failures
+- `GET  /api/ip-changes?limit=20` — observed public-IP changes (kept apart from the pruned log)
 - `POST /api/services` — `{ name, provider, username?, password?, interval_sec?, domains? }`
 - `POST /api/services/:id/domains` — `{ hostname, domainname }`
 - `DELETE /api/services/:id/domains/:domainId`
+- `PATCH /api/services/:id` — `{ name?, interval_sec?, status?, username?, password? }`; provider is fixed,
+  a replaced credential is verified first (`422` on failure), a duplicate name is `409`
 - `PUT  /api/services/:id/status` — `{ status: active|paused }`
 - `DELETE /api/services/:id`
 - `POST /api/check` — force an IP check + update cycle now
@@ -85,3 +123,7 @@ eziarr runs a separate worker process because it does long, parallel,
 load-predictable-bad downloads. ezdyndns does one short HTTP GET per interval
 and provider calls only on actual IP change — pure async I/O. Process
 separation would only add an IPC layer for state that already lives in SQLite.
+
+## License
+[MIT](LICENSE). Vendored third-party files keep their own licenses, listed in
+`frontend/public/vendor/LICENSES.txt`. See [CHANGELOG.md](CHANGELOG.md) for release history.
