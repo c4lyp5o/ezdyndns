@@ -41,6 +41,7 @@
 		<header class="topbar">
 			<div class="brand"><svg class="mark" aria-hidden="true"><use href="#mark"/></svg><span class="brand-name">ezdyndns</span><span class="scope mono" id="scope"></span></div>
 			<div class="topbar-actions">
+				<a class="text-btn" href="#toolbox">Toolbox</a>
 				<button class="primary" id="check-now" type="button" hx-post="/partials/check" hx-target="#hero" hx-disable="this">Check now</button>
 				<button class="icon-btn" id="lock-btn" type="button" aria-label="Lock dashboard" title="Lock">
 					<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>
@@ -80,7 +81,7 @@
 				</section>
 
 				<section class="panel span-8" aria-labelledby="records-title">
-					<div class="panel-head"><h2 class="panel-title" id="records-title">Record health</h2><span class="fresh">newest push on the right</span></div>
+					<div class="panel-head"><h2 class="panel-title" id="records-title">Record health</h2><span class="fresh">newest cycle on the right · outlined = skipped</span></div>
 					<div id="domains" hx-get="/partials/domains" hx-trigger="load, every 30s, ezdyndns:refresh from:body"></div>
 				</section>
 
@@ -95,14 +96,47 @@
 						<form id="log-filter" class="log-filter" hx-get="/partials/updates" hx-target="#updates" hx-trigger="change">
 							<div class="seg" role="radiogroup" aria-label="Result">
 								<label><input type="radio" name="result" value="all" checked><span>All</span></label>
+								<label><input type="radio" name="result" value="sent"><span>Sent</span></label>
 								<label><input type="radio" name="result" value="failed"><span>Failures</span></label>
 							</div>
 							<label class="sr" for="log-domain">Record</label>
 							<select id="log-domain" name="domain_id"><option value="">All records</option></select>
 							<input type="hidden" name="limit" id="log-limit" value="50">
+							<button type="button" class="text-btn" id="log-export" title="Download the filtered log as CSV">Export CSV</button>
 						</form>
 					</div>
 					<div id="updates" hx-get="/partials/updates" hx-include="#log-filter" hx-trigger="load, every 30s, ezdyndns:refresh from:body"></div>
+				</section>
+
+				<!-- DNS toolbox: lookups across public resolvers and the zone's own nameservers -->
+				<section class="panel span-12" id="toolbox" aria-labelledby="toolbox-title">
+					<div class="panel-head">
+						<h2 class="panel-title" id="toolbox-title">Toolbox</h2>
+						<div class="seg tool-tabs" role="radiogroup" aria-label="Tool">
+							<label><input type="radio" name="tool" value="lookup" checked data-tool-tab><span>DNS lookup</span></label>
+							<label><input type="radio" name="tool" value="mail" data-tool-tab><span>Mail checks</span></label>
+							<label><input type="radio" name="tool" value="reverse" data-tool-tab><span>Reverse DNS</span></label>
+						</div>
+					</div>
+					<form class="tool-form" id="tool-lookup" data-tool="lookup" hx-get="/partials/tools/lookup" hx-target="#tool-out" hx-disable="find button">
+						<label class="field"><span>Name</span><input name="name" required placeholder="home.domain.tld" autocomplete="off" spellcheck="false"></label>
+						<label class="field narrow"><span>Type</span><select name="type">
+							<option>A</option><option>AAAA</option><option>CNAME</option><option>MX</option><option>TXT</option>
+							<option>NS</option><option>SOA</option><option>CAA</option><option>SRV</option><option>PTR</option>
+						</select></label>
+						<input type="hidden" name="expected">
+						<button type="submit" class="ghost">Look up</button>
+					</form>
+					<form class="tool-form" id="tool-mail" data-tool="mail" hx-get="/partials/tools/mail" hx-target="#tool-out" hx-disable="find button" hidden>
+						<label class="field"><span>Domain</span><input name="domain" required placeholder="domain.tld" autocomplete="off" spellcheck="false"></label>
+						<label class="field narrow"><span>DKIM selector</span><input name="selector" placeholder="optional" autocomplete="off" spellcheck="false"></label>
+						<button type="submit" class="ghost">Check mail</button>
+					</form>
+					<form class="tool-form" id="tool-reverse" data-tool="reverse" hx-get="/partials/tools/reverse" hx-target="#tool-out" hx-disable="find button" hidden>
+						<label class="field"><span>IP address</span><input name="ip" required placeholder="203.0.113.10" autocomplete="off" spellcheck="false"></label>
+						<button type="submit" class="ghost">Look up PTR</button>
+					</form>
+					<div id="tool-out" class="tool-out" aria-live="polite"></div>
 				</section>
 			</div>
 		</main>
