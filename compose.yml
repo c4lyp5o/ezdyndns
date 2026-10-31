@@ -1,5 +1,9 @@
 services:
   ezdyndns:
+    # The released image (see the Release workflow); deploy with
+    # `docker compose pull && docker compose up -d --no-build`. To run a local
+    # build instead: EZDYNDNS_IMAGE=ezdyndns-local docker compose up -d --build
+    image: ${EZDYNDNS_IMAGE:-ghcr.io/c4lyp5o/ezdyndns}:${EZDYNDNS_VERSION:-1.0.0}
     build: .
     container_name: ezdyndns
     restart: unless-stopped
