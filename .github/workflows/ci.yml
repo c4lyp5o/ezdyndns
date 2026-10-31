@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches: [master, development]
+  pull_request:
+    branches: [master, development]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      - name: Biome
+        run: bunx @biomejs/biome@2.2.3 lint --reporter=github .
+
+  vendor:
+    name: Vendored frontend files
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The Traefik CSP blocks CDNs, so every file index.html and ui.js load must be committed.
+      - name: Referenced files exist
+        run: |
+          set -euo pipefail
+          cd frontend/public
+          missing=0
+          for f in $(grep -ohE '"/(vendor/[^"]+|app\.(js|css)|ui\.js)"' index.html app.css ui.js | tr -d '"' | sort -u); do
+            if [ ! -f ".$f" ]; then echo "::error file=frontend/public/index.html::missing $f"; missing=1; fi
+          done
+          for f in $(grep -ohE 'url\("?/vendor/[^")]+' app.css | sed -E 's/url\("?//' | sort -u); do
+            if [ ! -f ".$f" ]; then echo "::error file=frontend/public/app.css::missing $f"; missing=1; fi
+          done
+          test -s vendor/LICENSES.txt || { echo "::error::vendor/LICENSES.txt missing"; missing=1; }
+          exit $missing
+
+  docker:
+    name: Docker build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: ezdyndns:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Smoke test
+        run: |
+          set -euo pipefail
+          docker run -d --name ezdyndns-ci -p 5070:5070 \
+            -e EZDYNDNS_HOST=0.0.0.0 \
+            -e EZDYNDNS_TOKEN=ci-token \
+            -e EZDYNDNS_ENCRYPTION_KEY="$(head -c 32 /dev/urandom | base64)" \
+            ezdyndns:ci
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:5070/ -o /dev/null; then break; fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:5070/ | grep -q '<title>ezdyndns</title>'
+          curl -fsS -H 'x-api-token: ci-token' http://127.0.0.1:5070/api/status
+      - name: Container logs
+        if: always()
+        run: docker logs ezdyndns-ci || true

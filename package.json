@@ -2,7 +2,7 @@
   "name": "ezdyndns",
   "private": true,
   "type": "module",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "scripts": {
     "install:backend": "cd backend && bun install",
     "install:frontend": "cd frontend && bun install",
@@ -11,6 +11,9 @@
     "dev:frontend": "echo 'no build step - frontend is static htmx'",
     "dev": "bun run dev:backend",
     "test:backend": "cd backend && bun test",
+    "test": "bun run test:backend",
+    "lint": "bunx @biomejs/biome@2.2.3 lint .",
+    "vendor": "./scripts/vendor-frontend.sh",
     "start": "pm2-runtime start ecosystem.config.js --env production",
     "stop": "pm2 stop all",
     "restart": "pm2 restart all",
@@ -18,5 +21,6 @@
   },
   "devDependencies": {
     "@types/bun": "latest"
-  }
+  },
+  "license": "MIT"
 }

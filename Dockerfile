@@ -1,6 +1,6 @@
 # ezdyndns — DDNS updater for Calypso's domains
 # Static htmx frontend + Elysia/Bun backend, no build step.
-FROM oven/bun:1.3.8-alpine
+FROM oven/bun:1.4.4-alpine
 
 WORKDIR /app
 
@@ -16,8 +16,9 @@ ENV TZ=Asia/Kuala_Lumpur
 ENV PATH="/home/bun/.bun/bin:${PATH}"
 
 # Dependencies first so source edits don't bust the layer cache
-COPY backend/package.json ./backend/
-RUN cd backend && bun install --production
+# with the lockfile, so the image gets the versions CI tested
+COPY backend/package.json backend/bun.lock ./backend/
+RUN cd backend && bun install --production --frozen-lockfile
 
 COPY backend ./backend
 COPY frontend ./frontend

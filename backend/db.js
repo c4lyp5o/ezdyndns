@@ -41,6 +41,15 @@ db.exec(`
 		created_at TEXT NOT NULL DEFAULT (datetime('now'))
 	);
 	CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT);
+	-- One row per observed public-IP change. Kept apart from updates, which is
+	-- pruned after 3 days, so the dashboard can show how long an IP has held.
+	CREATE TABLE IF NOT EXISTS ip_changes (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		ip TEXT NOT NULL,
+		previous_ip TEXT,
+		source TEXT,
+		created_at TEXT NOT NULL DEFAULT (datetime('now'))
+	);
 `);
 
 // Migrations: CREATE TABLE only covers fresh installs, so any change to a CHECK
@@ -61,6 +70,39 @@ const MIGRATIONS = [
 						id INTEGER PRIMARY KEY AUTOINCREMENT,
 						name TEXT NOT NULL UNIQUE,
 						provider TEXT NOT NULL CHECK (provider IN ('namecheap', 'cloudflare', 'dedyn')),
+						username TEXT,
+						password TEXT,
+						status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'paused')),
+						interval_sec INTEGER NOT NULL DEFAULT 300 CHECK (interval_sec >= 60),
+						created_at TEXT NOT NULL DEFAULT (datetime('now')),
+						updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+					);
+					INSERT INTO services_new SELECT * FROM services;
+					DROP TABLE services;
+					ALTER TABLE services_new RENAME TO services;
+				`);
+			})(),
+	},
+	{
+		// Duck DNS, Porkbun, DigitalOcean, Gandi and FreeDNS added 2026-10-31. The
+		// provider list now lives in services/catalog.js and is checked by the API,
+		// so the CHECK is dropped instead of rebuilding the table for every provider.
+		// foreign_keys is off on this connection, so DROP TABLE leaves domains alone.
+		id: "0002-provider-check-in-code",
+		probe: () =>
+			!(
+				db
+					.query("SELECT sql FROM sqlite_master WHERE type='table' AND name='services'")
+					.get()
+					?.sql?.includes("CHECK (provider") ?? true
+			),
+		up: () =>
+			db.transaction(() => {
+				db.exec(`
+					CREATE TABLE services_new (
+						id INTEGER PRIMARY KEY AUTOINCREMENT,
+						name TEXT NOT NULL UNIQUE,
+						provider TEXT NOT NULL,
 						username TEXT,
 						password TEXT,
 						status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'paused')),
@@ -128,6 +170,34 @@ export const addDomain = (serviceId, { hostname, domainname, password }) =>
 		.lastInsertRowid;
 export const deleteDomain = (serviceId, domainId) =>
 	db.run("DELETE FROM domains WHERE service_id = ? AND id = ?", [serviceId, domainId]);
+// Partial update: only the keys present are written. Credentials are
+// re-encrypted; an empty string means "keep the stored value".
+export const updateService = (id, { name, username, password, interval_sec, status }) => {
+	const sets = [];
+	const args = [];
+	if (name) {
+		sets.push("name = ?");
+		args.push(name);
+	}
+	if (interval_sec) {
+		sets.push("interval_sec = ?");
+		args.push(Number(interval_sec));
+	}
+	if (status) {
+		sets.push("status = ?");
+		args.push(status);
+	}
+	if (username) {
+		sets.push("username = ?");
+		args.push(encryptSecret(username));
+	}
+	if (password) {
+		sets.push("password = ?");
+		args.push(encryptSecret(password));
+	}
+	if (sets.length === 0) return;
+	db.run(`UPDATE services SET ${sets.join(", ")}, updated_at = datetime('now') WHERE id = ?`, [...args, id]);
+};
 export const deleteService = (id) => db.run("DELETE FROM services WHERE id = ?", [id]);
 export const setStatus = (id, status) =>
 	db.run("UPDATE services SET status = ?, updated_at = datetime('now') WHERE id = ?", [status, id]);
@@ -144,14 +214,75 @@ export const domainIsCurrent = (domainId, ip) =>
 			.get(domainId, ip),
 	);
 
-export const recentUpdates = (limit = 25) =>
+// The newest successful push for one record, for providers that push only on change.
+export const lastGoodPush = (domainId) =>
 	db
+		.query("SELECT new_ip, created_at FROM updates WHERE domain_id = ? AND ok = 1 ORDER BY id DESC LIMIT 1")
+		.get(domainId);
+
+export const recentUpdates = (limit = 25, { domainId, failedOnly } = {}) => {
+	const where = [];
+	const args = [];
+	if (domainId) {
+		where.push("u.domain_id = ?");
+		args.push(Number(domainId));
+	}
+	if (failedOnly) where.push("u.ok = 0");
+	const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
+	return db
 		.query(
 			`SELECT u.*, d.hostname, d.domainname, s.name as service_name
 			 FROM updates u JOIN domains d ON d.id = u.domain_id JOIN services s ON s.id = u.service_id
-			 ORDER BY u.id DESC LIMIT ?`,
+			 ${clause} ORDER BY u.id DESC LIMIT ?`,
 		)
-		.all(limit);
+		.all(...args, limit);
+};
+
+export const countUpdates = ({ domainId, failedOnly } = {}) => {
+	const where = [];
+	const args = [];
+	if (domainId) {
+		where.push("domain_id = ?");
+		args.push(Number(domainId));
+	}
+	if (failedOnly) where.push("ok = 0");
+	const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
+	return db.query(`SELECT COUNT(*) AS n FROM updates ${clause}`).get(...args).n;
+};
+
+// Per-record health for the dashboard: the last N pushes (newest first), the
+// last success, and how many pushes in a row have failed.
+export const domainHealth = (cycles = 24) =>
+	db
+		.query(
+			`SELECT d.id, d.hostname, d.domainname, d.service_id, s.name AS service_name,
+			        s.provider, s.status AS service_status
+			 FROM domains d JOIN services s ON s.id = d.service_id
+			 ORDER BY s.name, d.domainname, d.hostname`,
+		)
+		.all()
+		.map((d) => {
+			const recent = db
+				.query("SELECT ok, new_ip, detail, created_at FROM updates WHERE domain_id = ? ORDER BY id DESC LIMIT ?")
+				.all(d.id, cycles);
+			const lastOk = db
+				.query("SELECT new_ip, created_at FROM updates WHERE domain_id = ? AND ok = 1 ORDER BY id DESC LIMIT 1")
+				.get(d.id);
+			const failStreak = recent.findIndex((r) => r.ok === 1);
+			return {
+				...d,
+				recent,
+				last: recent[0] ?? null,
+				last_ok: lastOk ?? null,
+				fail_streak: failStreak === -1 ? recent.length : failStreak,
+			};
+		});
+
+export const recordIpChange = (ip, previousIp, source) =>
+	db.query("INSERT INTO ip_changes (ip, previous_ip, source) VALUES (?, ?, ?)").run(ip, previousIp ?? null, source ?? null);
+
+export const recentIpChanges = (limit = 6) =>
+	db.query("SELECT * FROM ip_changes ORDER BY id DESC LIMIT ?").all(limit);
 
 export const getState = (key) => db.query("SELECT value FROM state WHERE key = ?").get(key);
 
@@ -160,6 +291,7 @@ export const getState = (key) => db.query("SELECT value FROM state WHERE key = ?
 export const pruneUpdates = () => {
 	db.run("DELETE FROM updates WHERE ok = 1 AND created_at < datetime('now', '-3 days')");
 	db.run("DELETE FROM updates WHERE ok = 0 AND created_at < datetime('now', '-30 days')");
+	db.run("DELETE FROM ip_changes WHERE id NOT IN (SELECT id FROM ip_changes ORDER BY id DESC LIMIT 200)");
 };
 export const setState = (key, value) =>
 	db

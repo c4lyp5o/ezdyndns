@@ -1,0 +1,10 @@
+# Keep secrets, local state and host-built modules out of the image.
+.git
+.github
+.taste-skill
+**/node_modules
+**/.env
+**/.env.*
+!**/*.env.example
+db
+logs

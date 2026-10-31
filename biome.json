@@ -1,8 +1,6 @@
 {
 	"$schema": "https://biomejs.dev/schemas/2.2.3/schema.json",
-	"organizeImports": {
-		"enabled": true
-	},
+	"assist": { "actions": { "source": { "organizeImports": "on" } } },
 	"formatter": {
 		"enabled": true,
 		"indentStyle": "tab",
@@ -15,6 +13,14 @@
 		}
 	},
 	"files": {
-		"ignore": ["node_modules/**", "bun.lock", "frontend/public/htmx.min.js"]
+		"includes": [
+			"**",
+			"!**/node_modules",
+			"!**/bun.lock",
+			"!frontend/public/vendor",
+			"!db",
+			"!logs",
+			"!.taste-skill"
+		]
 	}
 }

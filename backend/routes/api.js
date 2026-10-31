@@ -1,7 +1,8 @@
 import { Elysia } from "elysia";
-import { getServices, getService, getDomains, createService, addDomain, deleteDomain, deleteService, setStatus, recentUpdates, getState, sanitizeService } from "../db";
-import { restartScheduler, stopScheduler, checkOnce } from "../scheduler";
-import { PROVIDERS, verifyProvider } from "../services/providers";
+import { getServices, getService, getDomains, createService, updateService, addDomain, deleteDomain, deleteService, setStatus, recentUpdates, getState, sanitizeService, domainHealth, recentIpChanges } from "../db";
+import { restartScheduler, checkOnce } from "../scheduler";
+import { CATALOG, PROVIDERS, verifyProvider, verifyCredentialChange } from "../services/providers";
+import { duckSubname } from "../services/duckdns";
 import logger from "../logger";
 
 import config from "../config";
@@ -41,7 +42,15 @@ export const api = new Elysia({ prefix: "/api" })
 			services,
 		};
 	})
-	.get("/updates", ({ query }) => recentUpdates(Number(query.limit) || 25))
+	.get("/updates", ({ query }) =>
+		recentUpdates(Math.min(Number(query.limit) || 25, 500), {
+			domainId: query.domain_id,
+			failedOnly: query.failed === "1" || query.failed === "true",
+		}),
+	)
+	// Per-record health: last pushes, last success, consecutive failures.
+	.get("/domains", () => ({ ip: getState("last_ip")?.value ?? null, domains: domainHealth() }))
+	.get("/ip-changes", ({ query }) => recentIpChanges(Math.min(Number(query.limit) || 20, 200)))
 	.post("/services", async ({ body, set }) => {
 		const { name, provider, username, password, interval_sec, domains } = body;
 		if (!name || !provider) {
@@ -74,15 +83,47 @@ export const api = new Elysia({ prefix: "/api" })
 		set.status = 201;
 		return { id };
 	})
+	// Partial edit. Provider is fixed (it decides what the credentials mean);
+	// a replaced credential is verified before anything is written.
+	.patch("/services/:id", async ({ params, body, set }) => {
+		const id = Number(params.id);
+		const service = getService(id);
+		if (!service) {
+			set.status = 404;
+			return { message: "service not found" };
+		}
+		const problem = validateServiceEdit(body ?? {});
+		if (problem) {
+			set.status = 400;
+			return { message: problem };
+		}
+		const check = await verifyCredentialChange(service, getDomains(id)[0], body);
+		if (check && !check.ok) {
+			set.status = 422;
+			return { message: `credential check failed: ${check.detail}` };
+		}
+		try {
+			updateService(id, body);
+		} catch (err) {
+			if (String(err.message).includes("UNIQUE")) {
+				set.status = 409;
+				return { message: "a service with that name already exists" };
+			}
+			throw err;
+		}
+		restartScheduler();
+		return sanitizeService(getService(id));
+	})
 	.post("/services/:id/domains", ({ params, body, set }) => {
 		const id = Number(params.id);
 		if (!getService(id)) {
 			set.status = 404;
 			return { message: "service not found" };
 		}
-		if (!body.hostname || !body.domainname) {
+		const problem = validateRecord(getService(id), body ?? {}, getDomains(id).length);
+		if (problem) {
 			set.status = 400;
-			return { message: "hostname and domainname are required" };
+			return { message: problem };
 		}
 		addDomain(id, body);
 		return { ok: true };
@@ -118,3 +159,23 @@ export const api = new Elysia({ prefix: "/api" })
 		const result = await checkOnce();
 		return result;
 	});
+// A record added to an existing service. Returns a message, or null when valid.
+export function validateRecord(service, { hostname, domainname, password }, existing = 0) {
+	if (!hostname || !domainname) return "Host and domain are both required.";
+	if (service.provider === "duckdns" && !duckSubname({ hostname, domainname }))
+		return "Duck DNS records are <subname>.duckdns.org: host is the subname, domain is duckdns.org.";
+	// The service's own token belongs to its first record; every other record
+	// needs its own (FreeDNS tokens are per record).
+	if (CATALOG[service.provider]?.perRecord?.required && existing > 0 && !password)
+		return `${CATALOG[service.provider].label} needs this record's own update token.`;
+	return null;
+}
+
+export function validateServiceEdit({ name, interval_sec, status }) {
+	if (name !== undefined && !String(name).trim()) return "name cannot be empty";
+	if (interval_sec !== undefined && interval_sec !== "" && !(Number(interval_sec) >= 60))
+		return "interval_sec must be at least 60";
+	if (status !== undefined && status !== "" && !["active", "paused"].includes(status))
+		return "status must be active or paused";
+	return null;
+}

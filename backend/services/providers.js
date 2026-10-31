@@ -1,6 +1,12 @@
 import { decryptSecret } from "../crypto";
 import logger from "../logger";
+import { updateAfraid, verifyAfraidToken } from "./afraid";
+import { CATALOG, PROVIDERS } from "./catalog";
 import { dedynScope, updateDedyn, verifyDedynToken } from "./dedyn";
+import { updateDigitalOcean, verifyDigitalOceanToken } from "./digitalocean";
+import { updateDuckdns, verifyDuckdnsToken } from "./duckdns";
+import { updateGandi, verifyGandiToken } from "./gandi";
+import { updatePorkbun, verifyPorkbunKeys } from "./porkbun";
 
 // Provider adapters. Each returns { ok, detail }.
 // Credentials go in headers / POST body — NEVER in the URL (the 2024 cdyndns bug).
@@ -97,6 +103,11 @@ const providers = new Map([
 	// deSEC (dedyn.io): implementation lives in ./dedyn.js — the update.dedyn.io
 	// dynDNS endpoint, STS token verification and the TTL scope convention.
 	["dedyn", updateDedyn],
+	["duckdns", updateDuckdns],
+	["porkbun", updatePorkbun],
+	["digitalocean", updateDigitalOcean],
+	["gandi", updateGandi],
+	["afraid", updateAfraid],
 ]);
 
 export async function updateRecord(service, domain, ip, opts) {
@@ -105,7 +116,7 @@ export async function updateRecord(service, domain, ip, opts) {
 	return fn(service, domain, ip, opts);
 }
 
-export const PROVIDERS = ["namecheap", "cloudflare", "dedyn"];
+export { CATALOG, PROVIDERS };
 
 // Pre-flight credential check when a service is added, before anything is stored.
 // Takes RAW credentials (not the encrypted db fields) and returns { ok, detail };
@@ -113,14 +124,19 @@ export const PROVIDERS = ["namecheap", "cloudflare", "dedyn"];
 export async function verifyProvider({ provider, username, password, hostname, domainname }) {
 	if (!PROVIDERS.includes(provider)) return { ok: false, detail: `unknown provider: ${provider}` };
 
-	if (provider === "dedyn")
-		return verifyDedynToken(username, { hostname, domainname, signal: AbortSignal.timeout(10000) });
+	const opts = { hostname, domainname, signal: AbortSignal.timeout(10000) };
+	if (provider === "dedyn") return verifyDedynToken(username, opts);
+	if (provider === "duckdns") return verifyDuckdnsToken(username, opts);
+	if (provider === "porkbun") return verifyPorkbunKeys(username, password, opts);
+	if (provider === "digitalocean") return verifyDigitalOceanToken(username, opts);
+	if (provider === "gandi") return verifyGandiToken(username, opts);
+	if (provider === "afraid") return verifyAfraidToken(password, opts);
 
 	if (provider === "cloudflare") {
 		if (!username) return { ok: false, detail: "cloudflare needs an API token" };
 		try {
 			const res = await fetch("https://api.cloudflare.com/client/v4/user/tokens/verify", {
-				headers: { Authorization: `Token ${username}`, "Content-Type": "application/json" },
+				headers: { Authorization: `Bearer ${username}`, "Content-Type": "application/json" },
 				signal: AbortSignal.timeout(10000),
 			});
 			const j = await res.json().catch(() => ({}));
@@ -140,3 +156,19 @@ export async function verifyProvider({ provider, username, password, hostname, d
 }
 
 export { dedynScope };
+
+// Re-verify only when an edit replaces a credential. A provider with two keys
+// (Porkbun) is checked with the new one alongside the stored other one.
+// Returns null when the edit touches no credential (nothing to check).
+export async function verifyCredentialChange(service, domain, body) {
+	const fields = (CATALOG[service.provider]?.fields ?? []).map((f) => f.name);
+	if (!fields.some((f) => body?.[f])) return null;
+	const creds = Object.fromEntries(fields.map((f) => [f, body[f] || decryptSecret(service[f])]));
+	return verifyProvider({
+		provider: service.provider,
+		...creds,
+		hostname: domain?.hostname,
+		domainname: domain?.domainname,
+	});
+}
+
