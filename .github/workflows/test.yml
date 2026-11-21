@@ -24,7 +24,7 @@ jobs:
       fail-fast: false
       matrix:
         # 1.4.4 is the version the Docker image ships; latest catches upcoming breakage.
-        bun: ["1.4.4", "latest"]
+        bun: ["1.4.5", "latest"]
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2

@@ -22,9 +22,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.4
+          bun-version: 1.4.5
+      - name: Install root tooling (Biome)
+        run: bun install --frozen-lockfile --ignore-scripts
       - name: Biome
-        run: bunx @biomejs/biome@2.2.3 lint --reporter=github .
+        run: bunx biome lint --reporter=github .
 
   vendor:
     name: Vendored frontend files
