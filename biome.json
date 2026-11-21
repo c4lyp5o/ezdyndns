@@ -1,6 +1,12 @@
 {
 	"$schema": "https://biomejs.dev/schemas/2.6.8/schema.json",
-	"assist": { "actions": { "source": { "organizeImports": "on" } } },
+	"assist": {
+		"actions": {
+			"source": {
+				"organizeImports": "on"
+			}
+		}
+	},
 	"formatter": {
 		"enabled": true,
 		"indentStyle": "tab",
@@ -20,7 +26,8 @@
 			"!frontend/public/vendor",
 			"!db",
 			"!logs",
-			"!.taste-skill"
+			"!.taste-skill",
+			"!**/*.md"
 		]
 	}
 }
