@@ -108,7 +108,7 @@ gh auth token | docker login ghcr.io -u <github-user> --password-stdin
 docker compose pull
 docker compose up -d --no-build
 ```
-`compose.yml` runs `ghcr.io/c4lyp5o/ezdyndns:${EZDYNDNS_VERSION:-1.0.0}`; set `EZDYNDNS_VERSION` to
+`compose.yml` runs `ghcr.io/c4lyp5o/ezdyndns:${EZDYNDNS_VERSION:-1.0.1}`; set `EZDYNDNS_VERSION` to
 deploy another release. To run a local build instead:
 `EZDYNDNS_IMAGE=ezdyndns-local docker compose up -d --build`. Back up `db/ezdyndns.db` before an
 upgrade: migrations run on first boot and only move forward.
