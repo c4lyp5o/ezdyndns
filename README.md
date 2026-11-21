@@ -192,3 +192,7 @@ separation would only add an IPC layer for state that already lives in SQLite.
 ## License
 [MIT](LICENSE). Vendored third-party files keep their own licenses, listed in
 `frontend/public/vendor/LICENSES.txt`. See [CHANGELOG.md](CHANGELOG.md) for release history.
+
+## Development
+
+Setup, commands, tests, linting and the `development` → `master` release flow are in [DEVELOPER.md](DEVELOPER.md). Changes are listed in [CHANGELOG.md](CHANGELOG.md).

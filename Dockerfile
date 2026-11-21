@@ -1,6 +1,6 @@
 # ezdyndns — DDNS updater for Calypso's domains
 # Static htmx frontend + Elysia/Bun backend, no build step.
-FROM oven/bun:1.4.4-alpine
+FROM oven/bun:1.4.5-alpine
 
 WORKDIR /app
 
