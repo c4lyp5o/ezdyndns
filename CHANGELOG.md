@@ -12,16 +12,12 @@ up `db/ezdyndns.db` before upgrading.
 
 ## [Unreleased]
 
-### Changed
-- Header, sidebar and sign-in use the shared ez `Brand`: the ez icon and the lowercase name.
-
 ## [1.0.1] - 2026-11-22
 
 ### Changed
+- Header, sidebar and sign-in use the shared ez `Brand`: the ez icon and the lowercase name.
 - Dependencies updated (majors kept only where the tests passed), Docker image on oven/bun 1.4.5, Biome as the linter, and the shared ez favicon.
-
-### Changed
-- `compose.yml` runs the released GHCR image (`EZDYNDNS_VERSION`, default 1.0.0) instead of
+- `compose.yml` runs the released GHCR image (`EZDYNDNS_VERSION`, default 1.0.1) instead of
   building locally; `EZDYNDNS_IMAGE` switches back to a local build.
 
 ## [1.0.0] - 2026-10-31
