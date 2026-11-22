@@ -37,7 +37,8 @@ provider's adapter is in `backend/services/`. Adding one is a catalog entry plus
 | **dyndns2** (other) | Username + password, plus the update server | Yes, one real update | Any dyndns2 server (Dynu, Dyn, routers); push-on-change |
 
 Every provider except Namecheap can also keep an **AAAA** record current: add the record with type AAAA
-and ezdyndns detects the public IPv6 (api6.ipify.org, v6.ident.me) only while such a record is active.
+and ezdyndns detects the public IPv6 (v6.ident.me, ipv6.icanhazip.com, ipv6.whatismyip.akamai.com)
+only while such a record is active.
 
 Read-before-write providers (Cloudflare, Porkbun, DigitalOcean, Gandi) skip the write when the
 record already holds the IP. FreeDNS publishes no API spec; the adapter follows ddclient's
@@ -116,10 +117,12 @@ compose file. `db/` and `logs/` are bind-mounted, so the state survives
 rebuilds — the container must run as a uid that can write those directories.
 
 ## How it works
-- One loop ticks at the shortest active interval. Each tick asks all four IP sources at once
-  (ipinfo, ipify, myip, ifconfig.me) and needs **two to agree**; a lone answer is accepted only if it
-  matches the last known IP. Otherwise nothing is pushed that cycle, the hero says why, and one
-  "IP check inconclusive" notification goes out per hour.
+- One loop ticks at the shortest active interval. Each tick asks all six IP sources at once
+  (ipinfo, ifconfig.me, icanhazip, ip.sb, checkip.amazonaws.com, ident.me — spread across four
+  operators) and needs **two to agree**; a lone answer is accepted only if it matches the last known
+  IP. If every source times out in the same tick, the tick asks once more 3 s later before giving up,
+  so a single blip doesn't cost a cycle. Otherwise nothing is pushed that cycle, the hero says why,
+  and one "IP check inconclusive" notification goes out per hour.
 - A service is pushed when its own `interval_sec` is up, or at once when the IP changes, or right
   after it is added, resumed or given a record. Each result is logged in `updates` with old/new IP,
   result (ok / failed / skipped) and provider detail. Namecheap returns `ErrCount 0` even for a
