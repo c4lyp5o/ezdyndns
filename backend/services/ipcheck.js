@@ -4,17 +4,26 @@ import logger from "../logger";
 // Every source is asked at once and the answer needs two of them to agree, so
 // one broken or tampered responder can't repoint every record. A lone answer
 // is accepted only when it matches the last known IP (nothing would change).
+// Six sources across four operators (Google, Cloudflare, AWS, Hetzner), two
+// per operator at most: the quorum has to survive one operator, or one ISP's
+// DNS filtering, having a bad night. ipify and api.myip.com are gone — Maxis
+// DNS answers ipify with mcmc-redirect.maxis.com.my (times out), and
+// api.myip.com completes TLS then never sends a response.
 const IPV4_SOURCES = [
 	{ url: "https://ipinfo.io/json", extract: (d) => d.ip, name: "ipinfo" },
-	{ url: "https://api.ipify.org?format=json", extract: (d) => d.ip, name: "ipify" },
-	{ url: "https://api.myip.com", extract: (d) => d.ip, name: "myip" },
 	{ url: "https://ifconfig.me/all.json", extract: (d) => d.ip_addr, name: "ifconfigme" },
+	{ url: "https://ipv4.icanhazip.com", text: true, name: "icanhazip" },
+	{ url: "https://api.ip.sb/ip", text: true, name: "ipsb" },
+	{ url: "https://checkip.amazonaws.com", text: true, name: "checkip-aws" },
+	{ url: "https://ipv4.ident.me", text: true, name: "identme" },
 ];
 
-// IPv6-only hostnames, asked only when an active AAAA record exists.
+// IPv6-only hostnames, asked only when an active AAAA record exists. api6.ipify.org
+// is filtered to the same Maxis redirect as its IPv4 sibling, so it is out.
 const IPV6_SOURCES = [
-	{ url: "https://api6.ipify.org?format=json", extract: (d) => d.ip, name: "ipify6" },
 	{ url: "https://v6.ident.me", text: true, name: "ident6" },
+	{ url: "https://ipv6.icanhazip.com", text: true, name: "icanhazip6" },
+	{ url: "https://ipv6.whatismyip.akamai.com", text: true, name: "akamai6" },
 ];
 
 async function ask(src, valid, signal) {
@@ -54,14 +63,30 @@ async function poll(sources, valid, signal) {
 	return answers;
 }
 
+// A single blip where every source times out at once (WAN re-dial, packet
+// loss) must not cost a whole cycle or page anyone: ask once more before
+// giving up.
+const RETRY_DELAY_MS = 3000;
+
+export async function pollWithRetry(sources, valid, { signal, delayMs = RETRY_DELAY_MS, pollFn = poll } = {}) {
+	let answers = await pollFn(sources, valid, signal);
+	if (answers.length === 0 && !signal?.aborted) {
+		logger.warn("[IPCHECK] no source answered; retrying once");
+		await new Promise((r) => setTimeout(r, delayMs));
+		if (!signal?.aborted) answers = await pollFn(sources, valid, signal);
+	}
+	return answers;
+}
+
 export async function getPublicIp({ last, signal } = {}) {
-	const result = decide(await poll(IPV4_SOURCES, isIPv4, signal), last);
+	const result = decide(await pollWithRetry(IPV4_SOURCES, isIPv4, { signal }), last);
 	logger.info(`[IPCHECK] ${result.ip} from ${result.source}`);
 	return result;
 }
 
 // Few IPv6 echo services exist, so one valid answer is enough; two that
-// disagree is still an error.
+// disagree is still an error. No retry: a host without IPv6 pays this
+// timeout every cycle, and a missing AAAA address is handled downstream.
 export async function getPublicIp6({ last, signal } = {}) {
 	const answers = await poll(IPV6_SOURCES, isIPv6, signal);
 	const result = decide(answers, last, { quorum: Math.min(2, Math.max(answers.length, 1)) });

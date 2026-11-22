@@ -12,6 +12,22 @@ up `db/ezdyndns.db` before upgrading.
 
 ## [Unreleased]
 
+### Fixed
+- **The public-IP check survives a bad night.** It now asks six services across four operators
+  (`ipinfo`, `ifconfig.me`, `icanhazip`, `ip.sb`, `checkip.amazonaws.com`, `ident.me`) instead of
+  four, and if every source times out in the same tick it asks once more 3 s later before failing the
+  cycle — a single WAN blip no longer skips a cycle or sends a false "all IP check services failed"
+  notification. `api.ipify.org` (Maxis/MCMC DNS answers it with `mcmc-redirect.maxis.com.my`, so it
+  timed out every cycle) and `api.myip.com` (TLS completes, then no response ever arrives) were
+  silently reducing the quorum to the two Google-hosted sources; both are gone.
+- The IPv6 sources are `v6.ident.me`, `ipv6.icanhazip.com` and `ipv6.whatismyip.akamai.com`:
+  `api6.ipify.org` is filtered to the same ISP redirect as its IPv4 sibling, which left AAAA
+  detection with a single usable source.
+
+### Changed
+- `compose.yml` gives the container its own resolvers (1.1.1.1, 1.0.0.1) so lookups don't pass
+  through the ISP DNS filter that rewrites filtered names to a redirect host.
+
 ## [1.1.0] - 2026-11-22
 
 ### Upgrading
