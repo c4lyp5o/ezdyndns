@@ -85,7 +85,7 @@ Branches: `master` holds released code, `development` collects finished work, an
 on `feat/*` or `fix/*` branches cut from `development`. Pull requests go into `development`;
 `development` is merged into `master` for a release.
 
-Never point a local run at the `db/` a running container uses: set `EZDYNDNS_DB` to a scratch path.
+Never point a local run at the `data/` a running container uses: set `EZDYNDNS_DB` to a scratch path.
 
 ## Releases
 1. Move the `[Unreleased]` notes in `CHANGELOG.md` under a new version heading and set the same
@@ -105,9 +105,9 @@ gh auth token | docker login ghcr.io -u <github-user> --password-stdin
 docker compose pull
 docker compose up -d --no-build
 ```
-`compose.yml` runs `ghcr.io/c4lyp5o/ezdyndns:${EZDYNDNS_VERSION:-1.0.1}`; set `EZDYNDNS_VERSION` to
+`compose.yml` runs `ghcr.io/c4lyp5o/ezdyndns:${EZDYNDNS_VERSION:-1.1.0}`; set `EZDYNDNS_VERSION` to
 deploy another release. To run a local build instead:
-`EZDYNDNS_IMAGE=ezdyndns-local docker compose up -d --build`. Back up `db/ezdyndns.db` before an
+`EZDYNDNS_IMAGE=ezdyndns-local docker compose up -d --build`. Back up `data/ezdyndns.sqlite` before an
 upgrade: migrations run on first boot and only move forward.
 The compose file expects an external `traefik_default` network and a
 `traefik.http.routers.ezdyndns.rule=Host(...)` host. Set `EZDYNDNS_HOSTNAME`

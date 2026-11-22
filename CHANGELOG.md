@@ -12,9 +12,19 @@ up `db/ezdyndns.db` before upgrading.
 
 ## [Unreleased]
 
-## [1.0.1] - 2026-11-22
+## [1.1.0] - 2026-11-22
+
+### Upgrading
+Everything now lives in one folder, `/data` (`DATA_DIR`), and the database is `ezdyndns.sqlite`.
+
+1. Stop the container.
+2. Move `db/ezdyndns.db` (with any `-wal`/`-shm` files) into a `data/` folder as `data/ezdyndns.sqlite`.
+3. Change the volumes to `- ./data:/data` (see `compose.yml`) and start it.
+
+If you skip this, the app keeps using the old database and logs a warning, so nothing is lost.
 
 ### Changed
+- All state lives under one folder, `DATA_DIR` (`/data` in the image, `data/` when run from source), declared as a Docker volume. See **Upgrading**.
 - The Docker image follows the ez standard: Alpine, runs as the unprivileged `bun` user (uid 1000), and a `HEALTHCHECK` that reports healthy within seconds of start.
 - CI is two workflows, `test.yml` and `publish.yml`. Merging to `master` publishes `:<version>`, `:latest` and `:sha-<commit>` after the tests (and an image boot check) pass; a `vX.Y.Z` tag is optional and adds a GitHub Release.
 - Every push to `development` publishes `:development` and `:sha-<commit>` after the tests, so unreleased changes can be tried without touching `master`.

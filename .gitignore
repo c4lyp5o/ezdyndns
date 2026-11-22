@@ -13,3 +13,6 @@ db/*.db-wal
 
 # design-tool working files (screenshots, direction sheet)
 .taste-skill/
+
+# runtime state (DATA_DIR default when run from source)
+/data/
