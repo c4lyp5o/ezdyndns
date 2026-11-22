@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 // stubbed network. Temp db via setup.js; resolution checks are off there.
 const db = await import("../db");
 const { encryptSecret } = await import("../crypto");
-const { decide } = await import("../services/ipcheck");
+const { decide, pollWithRetry } = await import("../services/ipcheck");
 const { readReply, updateUrl } = await import("../services/dyndns2");
 const { updateRecord } = await import("../services/providers");
 const { channels } = await import("../services/notify");
@@ -33,7 +33,7 @@ function network(handlers) {
 }
 const ipSources = (ip) => ({
 	"ipinfo.io": () => [200, { ip }],
-	"api.ipify.org": () => [200, { ip }],
+	"ipv4.icanhazip.com": () => [200, ip],
 });
 
 describe("IP agreement", () => {
@@ -52,6 +52,49 @@ describe("IP agreement", () => {
 
 	it("accepts a lone answer that matches the last known IP", () => {
 		expect(decide([{ name: "a", ip: "1.1.1.1" }], "1.1.1.1").ip).toBe("1.1.1.1");
+	});
+});
+
+describe("IP check retry", () => {
+	const ok = [{ name: "a", ip: "1.1.1.1" }];
+
+	it("asks once more when no source answered", async () => {
+		let calls = 0;
+		const answers = await pollWithRetry([], null, {
+			delayMs: 0,
+			pollFn: async () => (++calls === 1 ? [] : ok),
+		});
+		expect(calls).toBe(2);
+		expect(answers).toEqual(ok);
+	});
+
+	it("does not retry when a source did answer", async () => {
+		let calls = 0;
+		const answers = await pollWithRetry([], null, {
+			delayMs: 0,
+			pollFn: async () => {
+				calls++;
+				return ok;
+			},
+		});
+		expect(calls).toBe(1);
+		expect(answers).toEqual(ok);
+	});
+
+	it("skips the retry when the caller already aborted", async () => {
+		let calls = 0;
+		const ctl = new AbortController();
+		ctl.abort();
+		const answers = await pollWithRetry([], null, {
+			delayMs: 0,
+			signal: ctl.signal,
+			pollFn: async () => {
+				calls++;
+				return [];
+			},
+		});
+		expect(calls).toBe(1);
+		expect(answers).toEqual([]);
 	});
 });
 
@@ -169,7 +212,7 @@ describe("scheduler", () => {
 	it("pushes nothing when the IP sources disagree", async () => {
 		const sid = db.createService({ name: "quiet", provider: "duckdns", username: "t" });
 		const did = db.addDomain(sid, { hostname: "q", domainname: "duckdns.org" });
-		network({ "ipinfo.io": () => [200, { ip: "203.0.113.1" }], "api.ipify.org": () => [200, { ip: "203.0.113.2" }] });
+		network({ "ipinfo.io": () => [200, { ip: "203.0.113.1" }], "ipv4.icanhazip.com": () => [200, "203.0.113.2"] });
 		await expect(checkOnce()).rejects.toThrow("disagree");
 		expect(db.countUpdates({ domainId: did })).toBe(0);
 		expect(db.getState("last_check_error").value).toContain("disagree");
