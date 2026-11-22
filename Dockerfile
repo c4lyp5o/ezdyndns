@@ -24,7 +24,7 @@ RUN cd backend && bun install --production --frozen-lockfile --ignore-scripts
 COPY backend ./backend
 COPY frontend ./frontend
 COPY package.json ecosystem.config.js ./
-RUN mkdir -p /data && chown -R bun:bun /data
+RUN mkdir -p /data /data/logs && chown -R bun:bun /data /data/logs
 USER bun
 VOLUME ["/data"]
 EXPOSE 5070
