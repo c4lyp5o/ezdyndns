@@ -1,9 +1,18 @@
 import { Database } from "bun:sqlite";
+import { mkdirSync } from "node:fs";
+import path from "node:path";
 
 import { encryptSecret } from "./crypto";
+import { dataDir, keepLegacy } from "./datadir";
 import logger from "./logger";
 
-const DB_PATH = process.env.EZDYNDNS_DB || `${import.meta.dir}/../db/ezdyndns.db`;
+// All state lives under DATA_DIR (ez standard). A database at the pre-1.1
+// location (db/ezdyndns.db) keeps being used until it is moved.
+const ROOT = path.join(import.meta.dir, "..");
+const DB_PATH =
+	process.env.EZDYNDNS_DB ||
+	keepLegacy(path.join(dataDir(ROOT), "ezdyndns.sqlite"), [path.join(ROOT, "db/ezdyndns.db")]);
+mkdirSync(path.dirname(DB_PATH), { recursive: true });
 
 export const db = new Database(DB_PATH, { create: true });
 db.exec("PRAGMA journal_mode = WAL;");

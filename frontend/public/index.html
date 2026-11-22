@@ -2,6 +2,8 @@
 <html lang="en" data-theme="dark">
 <head>
 	<meta charset="utf-8">
+	<link rel="icon" type="image/png" href="/icons/icon-192.png" />
+	<link rel="apple-touch-icon" href="/icons/icon-192.png" />
 	<meta name="viewport" content="width=device-width, initial-scale=1">
 	<meta name="color-scheme" content="dark">
 	<title>ezdyndns</title>
@@ -11,19 +13,10 @@
 	<script src="/vendor/htmx.min.js"></script>
 </head>
 <body>
-	<!-- product mark: a home node with two record arcs (the thing ezdyndns keeps linked) -->
-	<svg width="0" height="0" class="sr" aria-hidden="true">
-		<symbol id="mark" viewBox="0 0 24 24">
-			<circle cx="12" cy="12" r="3.2" fill="currentColor"/>
-			<path d="M5.5 7.5a8 8 0 0 0 0 9M18.5 7.5a8 8 0 0 1 0 9" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
-			<path d="M2.5 4.8a12 12 0 0 0 0 14.4M21.5 4.8a12 12 0 0 1 0 14.4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" opacity=".45"/>
-		</symbol>
-	</svg>
-
 	<!-- ===== lock screen ===== -->
 	<main id="lockscreen">
 		<div class="lock-panel">
-			<div class="brand"><svg class="mark" aria-hidden="true"><use href="#mark"/></svg><span class="brand-name">ezdyndns</span></div>
+			<div class="brand"><img class="mark" src="/icons/icon-192.png" alt="" width="20" height="20"><span class="brand-name">ezdyndns</span></div>
 			<h2 class="lock-title">Unlock the dashboard</h2>
 			<p>Enter the management token from <span class="mono">backend/.env</span> (<span class="mono">EZDYNDNS_TOKEN</span>). It is kept for this browser tab only.</p>
 			<label class="field"><span>Management token</span>
@@ -39,7 +32,7 @@
 	<!-- ===== dashboard ===== -->
 	<div class="gated">
 		<header class="topbar">
-			<div class="brand"><svg class="mark" aria-hidden="true"><use href="#mark"/></svg><span class="brand-name">ezdyndns</span><span class="scope mono" id="scope"></span></div>
+			<div class="brand"><img class="mark" src="/icons/icon-192.png" alt="" width="20" height="20"><span class="brand-name">ezdyndns</span><span class="scope mono" id="scope"></span></div>
 			<div class="topbar-actions">
 				<a class="text-btn" href="#toolbox">Toolbox</a>
 				<button class="primary" id="check-now" type="button" hx-post="/partials/check" hx-target="#hero" hx-disable="this">Check now</button>

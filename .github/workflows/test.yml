@@ -1,38 +1,82 @@
-name: Test
+# ez standard test workflow: lint, tests and build, plus the Docker image
+# built, booted and healthy. Runs on PRs; pushes to development and master
+# run it through publish.yml, before anything is published.
+name: test
 
 on:
-  push:
-    branches: [master, development, "feat/**", "fix/**"]
   pull_request:
+    branches: [development, master]
   workflow_call:
   workflow_dispatch:
 
 permissions:
   contents: read
 
-concurrency:
-  group: test-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   test:
-    name: bun test (${{ matrix.bun }})
+    name: Lint & tests
     runs-on: ubuntu-latest
-    # A failure on the newest Bun is a warning, not a blocker for a release.
-    continue-on-error: ${{ matrix.bun == 'latest' }}
-    strategy:
-      fail-fast: false
-      matrix:
-        # 1.4.4 is the version the Docker image ships; latest catches upcoming breakage.
-        bun: ["1.4.4", "latest"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
+      - name: 🧾 Checkout source
+        uses: actions/checkout@v7
+      - name: 🥟 Set up Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          bun-version: ${{ matrix.bun }}
-      - name: Install
-        working-directory: backend
-        run: bun install --frozen-lockfile
-      - name: Test
+          bun-version: 1.4.5
+      - name: 📦 Install dependencies
+        run: |
+          bun install --frozen-lockfile --ignore-scripts
+          cd backend && bun install --frozen-lockfile
+      - name: 🧹 Lint (Biome)
+        run: bunx biome lint --reporter=github .
+      - name: 🧪 Tests
         working-directory: backend
         run: bun test
+      - name: 📁 Vendored frontend files exist
+        run: |
+          set -euo pipefail
+          cd frontend/public
+          missing=0
+          for f in $(grep -ohE '"/(vendor/[^"]+|app\.(js|css)|ui\.js)"' index.html app.css ui.js | tr -d '"' | sort -u); do
+            if [ ! -f ".$f" ]; then echo "::error file=frontend/public/index.html::missing $f"; missing=1; fi
+          done
+          for f in $(grep -ohE 'url\("?/vendor/[^")]+' app.css | sed -E 's/url\("?//' | sort -u); do
+            if [ ! -f ".$f" ]; then echo "::error file=frontend/public/app.css::missing $f"; missing=1; fi
+          done
+          test -s vendor/LICENSES.txt || { echo "::error::vendor/LICENSES.txt missing"; missing=1; }
+          exit $missing
+
+  docker:
+    name: Docker image (build, boot, healthy)
+    runs-on: ubuntu-latest
+    steps:
+      - name: 🧾 Checkout source
+        uses: actions/checkout@v7
+      - name: 🐳 Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+      - name: 🛠️ Build image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          load: true
+          tags: ezdyndns:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: 🔬 Boot and wait for healthy
+        run: |
+          set -euo pipefail
+          docker run -d --name app -e EZDYNDNS_TOKEN=ci-token -e EZDYNDNS_ENCRYPTION_KEY="$(openssl rand -base64 32)" ezdyndns:ci
+          status=starting
+          for _ in $(seq 1 60); do
+            [ "$(docker inspect -f '{{.State.Running}}' app)" = true ] || { echo "::error::container exited"; exit 1; }
+            status=$(docker inspect -f '{{.State.Health.Status}}' app)
+            [ "$status" = healthy ] && break
+            sleep 2
+          done
+          test "$status" = healthy
+          test "$(docker exec app id -u)" = "1000"
+          docker exec app wget -qO- http://127.0.0.1:5070/ | grep -q '<title>ezdyndns</title>'
+          docker exec app wget -qO- --header 'x-api-token: ci-token' http://127.0.0.1:5070/api/status >/dev/null
+      - name: 🧾 Container logs
+        if: always()
+        run: docker logs app || true

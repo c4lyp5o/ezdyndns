@@ -1,6 +1,12 @@
 {
-	"$schema": "https://biomejs.dev/schemas/2.2.3/schema.json",
-	"assist": { "actions": { "source": { "organizeImports": "on" } } },
+	"$schema": "https://biomejs.dev/schemas/2.6.8/schema.json",
+	"assist": {
+		"actions": {
+			"source": {
+				"organizeImports": "on"
+			}
+		}
+	},
 	"formatter": {
 		"enabled": true,
 		"indentStyle": "tab",
@@ -9,7 +15,7 @@
 	"linter": {
 		"enabled": true,
 		"rules": {
-			"recommended": true
+			"preset": "recommended"
 		}
 	},
 	"files": {
@@ -20,7 +26,8 @@
 			"!frontend/public/vendor",
 			"!db",
 			"!logs",
-			"!.taste-skill"
+			"!.taste-skill",
+			"!**/*.md"
 		]
 	}
 }
