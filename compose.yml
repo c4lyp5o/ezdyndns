@@ -12,6 +12,11 @@ services:
     environment:
       - EZDYNDNS_HOST=0.0.0.0
       - TZ=Asia/Kuala_Lumpur
+    # Use public resolvers: the router's (Maxis) DNS rewrites filtered names such
+    # as api.ipify.org to mcmc-redirect.maxis.com.my, which only times out.
+    dns:
+      - 1.1.1.1
+      - 1.0.0.1
     volumes:
       # SQLite state + update log persist across rebuilds
       - ./data:/data
