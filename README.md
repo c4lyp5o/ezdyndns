@@ -1,7 +1,6 @@
 # 🌐 ezdyndns
 
-[![CI](https://github.com/c4lyp5o/ezdyndns/actions/workflows/ci.yml/badge.svg)](https://github.com/c4lyp5o/ezdyndns/actions/workflows/ci.yml)
-[![Test](https://github.com/c4lyp5o/ezdyndns/actions/workflows/test.yml/badge.svg)](https://github.com/c4lyp5o/ezdyndns/actions/workflows/test.yml)
+[![test](https://github.com/c4lyp5o/ezdyndns/actions/workflows/test.yml/badge.svg)](https://github.com/c4lyp5o/ezdyndns/actions/workflows/test.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 Self-hosted dynamic DNS updater. Watches your public IP and pushes A-record
@@ -92,14 +91,12 @@ Never point a local run at the `db/` a running container uses: set `EZDYNDNS_DB`
 1. Move the `[Unreleased]` notes in `CHANGELOG.md` under a new version heading and set the same
    version in `package.json`. From 1.0.0 the version follows semver over the public surface: the
    HTTP API under `/api`, the environment variables, and the database (migrations only move forward).
-2. Merge `development` into `master` and tag it: `git tag v1.0.0 && git push origin v1.0.0`.
-3. The **Release** workflow runs the tests, checks that the tag matches `package.json`, publishes
-   `ghcr.io/c4lyp5o/ezdyndns:<version>` (plus `<major>.<minor>` and `latest`), and creates a GitHub
-   release with that version's changelog section as its notes.
+2. Merge `development` into `master`. `publish.yml` runs the tests and publishes
+   `ghcr.io/c4lyp5o/ezdyndns:<version>`, `latest` and `sha-<commit>`. Tagging `vX.Y.Z` afterwards is
+   optional: it checks the tag matches `package.json`, pushes `:<version>` and creates a GitHub release
+   with that version's changelog section as its notes.
 
-CI (`ci.yml`) lints, checks that every vendored file the page loads is committed, and builds and
-smoke-tests the Docker image on pushes and pull requests to `master` and `development`. The
-**Test** workflow (`test.yml`) runs `bun test` on Bun 1.4.4 (the image's version) and the latest Bun.
+CI is two workflows, the same in every ez repo. `test.yml` (lint, tests, build, and the Docker image built, booted and checked healthy) runs on pull requests and pushes to `development`. `publish.yml` runs `test.yml` first, then publishes the image on every push to `master` and on an optional `vX.Y.Z` tag; see [DEVELOPER.md](DEVELOPER.md#branches-and-releases). The test job also checks that every vendored file the page loads is committed.
 
 ## Deploy (Docker)
 ```bash
