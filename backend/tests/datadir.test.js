@@ -48,9 +48,7 @@ describe("data layout", () => {
 		const { fresh, old } = tree();
 		touch(old);
 		const warnings = [];
-		expect(keepLegacy(fresh, [old], { warn: (m) => warnings.push(m) })).toBe(
-			old,
-		);
+		expect(keepLegacy(fresh, [old], { warn: (m) => warnings.push(m) })).toBe(old);
 		expect(warnings[0]).toContain(old);
 	});
 	test("once moved, the new path wins", () => {
@@ -59,18 +57,23 @@ describe("data layout", () => {
 		touch(fresh);
 		expect(keepLegacy(fresh, [old], quiet)).toBe(fresh);
 	});
-	test("folders count only when they hold files (delete.me ignored)", () => {
+	test("an existing old folder is kept even when empty (it is a mount)", () => {
 		const { root } = tree();
 		const freshDir = path.join(root, "data", "uploads");
 		const oldDir = path.join(root, "uploads");
-		mkdirSync(freshDir, { recursive: true });
+		mkdirSync(oldDir, { recursive: true });
+		expect(keepLegacy(freshDir, [oldDir], { dir: true, ...quiet })).toBe(oldDir);
 		touch(path.join(oldDir, "delete.me"));
-		expect(keepLegacy(freshDir, [oldDir], { dir: true, ...quiet })).toBe(
-			freshDir,
-		);
-		touch(path.join(oldDir, "a.bin"));
-		expect(keepLegacy(freshDir, [oldDir], { dir: true, ...quiet })).toBe(
-			oldDir,
-		);
+		expect(keepLegacy(freshDir, [oldDir], { dir: true, ...quiet })).toBe(oldDir);
+	});
+	test("once the new folder holds files, it wins", () => {
+		const { root } = tree();
+		const freshDir = path.join(root, "data", "uploads");
+		const oldDir = path.join(root, "uploads");
+		mkdirSync(oldDir, { recursive: true });
+		touch(path.join(freshDir, "delete.me"));
+		expect(keepLegacy(freshDir, [oldDir], { dir: true, ...quiet })).toBe(oldDir);
+		touch(path.join(freshDir, "a.bin"));
+		expect(keepLegacy(freshDir, [oldDir], { dir: true, ...quiet })).toBe(freshDir);
 	});
 });
